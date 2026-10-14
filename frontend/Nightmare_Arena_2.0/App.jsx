@@ -1,0 +1,891 @@
+import { useEffect, useRef, useState } from "react";
+import "./App.css";
+
+/* =====================================================================
+   ORGANISER SETTINGS: edit these
+   ===================================================================== */
+const EVENT_START = new Date("2026-10-30T09:00:00+05:30").getTime();
+const ORG = { wa: "91XXXXXXXXXX", mail: "your-email@college.edu" }; // WhatsApp: country code + number, no "+"
+// FC 26 format: "solo" (teamSize 1), "duo" (teamSize 2), "squad" (teamSize 3+)
+const FC26 = { format: "solo", teamSize: 1, labels: { solo: "SOLO 1v1", duo: "DUO", squad: "SQUAD" } };
+
+const RULES = {
+  bgmi: [
+    "Squads have four main players plus one optional substitute.",
+    "Every player must play on their own account, using the UID registered here.",
+    "No cheats, hacks, teaming or third-party tools. Offenders are disqualified.",
+    "Be ready in the lobby 15 minutes before your match.",
+    "The organisers' decisions are final.",
+  ],
+  fc26: [
+    "The tournament is individual (1v1 knockout) unless the organisers announce a different format.",
+    "Play only on the account and platform you registered with.",
+    "No cheating, exploits or unsportsmanlike behaviour.",
+    "Report to the venue 15 minutes before your match slot.",
+    "The organisers' decisions are final.",
+  ],
+};
+
+const COLORS = ["#ff2433", "#4db3ff", "#ffb23e", "#7dff7d", "#ff6ad5"];
+const WALL_ROWS = ["ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ"];
+const WALL_MSGS = ["RUN", "BGMI VS FIFA", "SEE YOU 30 OCT", "JOIN THE PARTY"];
+const SCRAWLS = [
+  ["RUN", "12%", "62%", -6],
+  ["IT'S COMING", "64%", "16%", 4],
+  ["THE GATE IS OPEN", "66%", "80%", -3],
+  ["TURN BACK", "6%", "88%", 7],
+];
+const GAMES = [
+  { no: "01", name: "BGMI", c: "#ff2433", text: "Squad of four. Drop in, loot fast and outlast every team when the lights flicker out.", chips: ["SQUAD / 4", "BATTLE ROYALE", "PRIZE: TBA"] },
+  { no: "02", name: "FIFA", c: "#4db3ff", text: "One versus one on the virtual pitch. Knockout bracket, no second chances.", chips: ["SOLO / 1v1", "KNOCKOUT", "PRIZE: TBA"] },
+];
+const TAPES = [
+  { name: "TAPE 01", date: "30.10.26", items: [
+    ["00:00", "Gates open + opening ceremony", "Check-in and rules briefing"],
+    ["01:30", "BGMI + FIFA qualifiers", "First blood"],
+    ["05:00", "Costume contest + FIFA knockouts", "Come dressed to scare"],
+  ] },
+  { name: "TAPE 02", date: "31.10.26", items: [
+    ["00:00", "Semi-finals, all games", "Only the strong remain"],
+    ["04:00", "Grand finals", "Both champions are decided"],
+    ["07:00", "Prize distribution + closing", "Tape ends"],
+  ] },
+];
+const BRIEF = [
+  ["WHO CAN PLAY"],
+  ["FORMAT", "BGMI in squads of four. FIFA is solo, 1v1 knockout."],
+  ["WHAT TO BRING", "Your own device for BGMI. FIFA consoles will be provided."],
+  ["ENTRY + PRIZES", "To be announced soon. Watch this space."],
+];
+
+/* =====================================================================
+   Small helpers
+   ===================================================================== */
+const pad = (n) => String(n).padStart(2, "0");
+
+function Rv({ as: Tag = "div", className = "", children, ...rest }) {
+  const ref = useRef(null);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const io = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting) { setShown(true); io.disconnect(); }
+    }, { threshold: 0.12 });
+    io.observe(ref.current);
+    return () => io.disconnect();
+  }, []);
+  return <Tag ref={ref} className={`${className} rv${shown ? " in" : ""}`} {...rest}>{children}</Tag>;
+}
+
+function useCountdown() {
+  const calc = () => {
+    let d = Math.max(0, EVENT_START - Date.now());
+    return [864e5, 36e5, 6e4, 1e3].map((m) => { const x = Math.floor(d / m); d -= x * m; return pad(x); });
+  };
+  const [p, setP] = useState(calc);
+  useEffect(() => { const id = setInterval(() => setP(calc()), 1000); return () => clearInterval(id); }, []);
+  return `${p[0]}D ${p[1]}H ${p[2]}M ${p[3]}S`;
+}
+
+function useHash() {
+  const [h, setH] = useState(window.location.hash);
+  useEffect(() => {
+    const fn = () => setH(window.location.hash);
+    window.addEventListener("hashchange", fn);
+    return () => window.removeEventListener("hashchange", fn);
+  }, []);
+  return h;
+}
+
+/* =====================================================================
+   Global overlays: spores, red flash, VHS HUD
+   ===================================================================== */
+function Spores() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const cv = ref.current, cc = cv.getContext("2d");
+    let W, H, raf;
+    const resize = () => { W = cv.width = innerWidth; H = cv.height = innerHeight; };
+    resize();
+    window.addEventListener("resize", resize);
+    const P = Array.from({ length: 80 }, (_, i) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 2 + 0.5, s: Math.random() * 0.4 + 0.1, a: Math.random(), red: i % 9 === 0 }));
+    const draw = () => {
+      cc.clearRect(0, 0, W, H);
+      for (const p of P) {
+        p.y += p.s; p.x += Math.sin(p.y / 50 + p.a * 6) * 0.35;
+        if (p.y > H + 5) { p.y = -5; p.x = Math.random() * W; }
+        cc.beginPath();
+        cc.fillStyle = p.red ? `rgba(255,36,51,${0.3 + p.a * 0.4})` : `rgba(220,230,255,${0.15 + p.a * 0.35})`;
+        cc.arc(p.x, p.y, p.r, 0, 7); cc.fill();
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+  }, []);
+  return <canvas id="sp" ref={ref} />;
+}
+
+function RedFlash() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (Math.random() < 0.55 && ref.current) {
+        const f = ref.current;
+        f.style.opacity = 0.16;
+        setTimeout(() => (f.style.opacity = 0), 100);
+        setTimeout(() => { f.style.opacity = 0.08; setTimeout(() => (f.style.opacity = 0), 80); }, 200);
+      }
+    }, 8000);
+    return () => clearInterval(id);
+  }, []);
+  return <div id="fl" ref={ref} />;
+}
+
+function Hud() {
+  const [s, setS] = useState(0);
+  useEffect(() => { const id = setInterval(() => setS((x) => x + 1), 1000); return () => clearInterval(id); }, []);
+  const tc = [s / 3600, (s / 60) % 60, s % 60].map((v) => pad(Math.floor(v))).join(":");
+  return (
+    <>
+      <div className="noise" /><div className="vhs" />
+      <div className="hud tl"><span className="rec">● REC</span> {tc}</div>
+      <div className="hud br">SIGNAL: UPSIDE DOWN<br />OCT 30 2026</div>
+    </>
+  );
+}
+
+function Nav() {
+  return (
+    <nav>
+      <b>NIGHTMARE ARENA 2.0</b>
+      <div>
+        <a href="#wall">The Wall</a><a href="#games">Games</a><a href="#tapes">Schedule</a>
+        <a className="cta" href="#register">Join</a>
+        <a href="#/admin" style={{ fontSize: ".75rem", color: "var(--dim)", marginLeft: 14 }}>Admin</a>
+      </div>
+    </nav>
+  );
+}
+
+/* =====================================================================
+   Hero with flashlight
+   ===================================================================== */
+function HeroContent({ lit, cd }) {
+  const t = lit ? "" : " t";
+  return (
+    <>
+      <div className={"k" + t}>COLLEGE ESPORTS FEST · THE GATE OPENS 30 OCT</div>
+      <div className={"frame" + t}><h1><small>THE</small>Nightmare<br />Arena 2.0</h1></div>
+      <div className={"date" + t}>30 — 31 OCTOBER 2026 · BGMI / FIFA</div>
+      <div className={"cd" + t}>{cd}</div>
+      <a className="btn" href="#register">Join the party ▶</a>
+    </>
+  );
+}
+
+function Hero() {
+  const ref = useRef(null);
+  const cd = useCountdown();
+
+  useEffect(() => {
+    const h = ref.current;
+    let tx = innerWidth / 2, ty = 300, cx = tx, cy = ty, last = 0, raf;
+    const t0 = performance.now();
+    const move = (e) => { const r = h.getBoundingClientRect(); tx = e.clientX - r.left; ty = e.clientY - r.top; last = performance.now(); };
+    h.addEventListener("pointermove", move);
+    const loop = (now) => {
+      const r = h.getBoundingClientRect();
+      if (now - last > 2500) { // no pointer: let the light wander (phones)
+        tx = r.width * (0.5 + 0.38 * Math.sin((now - t0) / 2300));
+        ty = r.height * (0.5 + 0.34 * Math.sin((now - t0) / 1700 + 1));
+      }
+      cx += (tx - cx) * 0.12; cy += (ty - cy) * 0.12;
+      const rad = (innerWidth < 720 ? 120 : 170) * (Math.random() < 0.015 ? 0.5 : 1);
+      h.style.setProperty("--x", cx + "px");
+      h.style.setProperty("--y", cy + "px");
+      h.style.setProperty("--r", rad + "px");
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); h.removeEventListener("pointermove", move); };
+  }, []);
+
+  return (
+    <header className="hero" ref={ref}>
+      <div className="layer dim"><HeroContent cd={cd} /></div>
+      <div className="layer lit" aria-hidden="true">
+        <HeroContent lit cd={cd} />
+        <div className="str">
+          {Array.from({ length: 14 }, (_, i) => (
+            <i key={i} className="bulb" style={{ "--c": COLORS[i % 5], "--d": `${(i * 0.37) % 2.4}s` }} />
+          ))}
+        </div>
+        {SCRAWLS.map(([t, x, y, r]) => (
+          <div key={t} className="scr" style={{ left: x, top: y, "--rot": `${r}deg` }}>{t}</div>
+        ))}
+      </div>
+      <div className="beam" />
+      <div className="hint">FIND THE LIGHT. SOMETHING IS WATCHING.</div>
+    </header>
+  );
+}
+
+/* =====================================================================
+   The alphabet wall
+   ===================================================================== */
+function Wall() {
+  const [on, setOn] = useState({});
+  const [msg, setMsg] = useState("");
+
+  const light = (ch, ms = 450) => {
+    setOn((o) => ({ ...o, [ch]: true }));
+    setTimeout(() => setOn((o) => ({ ...o, [ch]: false })), ms);
+  };
+
+  useEffect(() => { // auto-spelling loop
+    let dead = false;
+    const sl = (ms) => new Promise((r) => setTimeout(r, ms));
+    (async () => {
+      let i = 0;
+      while (!dead) {
+        const m = WALL_MSGS[i++ % WALL_MSGS.length];
+        setMsg("");
+        for (const ch of m) {
+          if (dead) return;
+          if (ch === " ") { setMsg((x) => x + " "); await sl(350); continue; }
+          setMsg((x) => x + ch);
+          setOn((o) => ({ ...o, [ch]: true }));
+          await sl(650);
+          setOn((o) => ({ ...o, [ch]: false }));
+          await sl(120);
+        }
+        await sl(1600);
+      }
+    })();
+    return () => { dead = true; };
+  }, []);
+
+  useEffect(() => { // type on the keyboard
+    const fn = (e) => {
+      if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      const k = e.key.toUpperCase();
+      if (k.length === 1 && k >= "A" && k <= "Z") light(k);
+    };
+    window.addEventListener("keydown", fn);
+    return () => window.removeEventListener("keydown", fn);
+  }, []);
+
+  return (
+    <section id="wall">
+      <Rv className="k2">// THE WALL</Rv>
+      <Rv as="h2">Someone is trying to <span>reach you</span></Rv>
+      <Rv className="wall">
+        {WALL_ROWS.map((row, ri) => (
+          <div className="row" key={row}>
+            {[...row].map((ch, i) => (
+              <div className="cell" key={ch} onClick={() => light(ch)}>
+                <i className={on[ch] ? "on" : ""} style={{ "--c": COLORS[(i + ri) % 5] }} />
+                <b>{ch}</b>
+              </div>
+            ))}
+          </div>
+        ))}
+        <div id="wm">{msg}</div>
+      </Rv>
+      <p className="note">// type on your keyboard or tap a letter. try it.</p>
+    </section>
+  );
+}
+
+/* =====================================================================
+   Home page sections
+   ===================================================================== */
+function GameSelect() {
+  const [active, setActive] = useState(0);
+  const canHover = typeof matchMedia !== "undefined" && matchMedia("(hover:hover)").matches;
+  return (
+    <section id="games">
+      <Rv className="k2">// CHOOSE YOUR GATE</Rv>
+      <Rv as="h2">Pick your <span>battleground</span></Rv>
+      <Rv className="sel">
+        {GAMES.map((g, i) => (
+          <div key={g.name} className={"p" + (active === i ? " on" : "")} style={{ "--c": g.c }}
+            onMouseEnter={() => canHover && setActive(i)} onClick={() => setActive(i)}>
+            <span className="no">{g.no}</span>
+            <h3>{g.name}</h3>
+            <div className="info">
+              <p>{g.text}</p>
+              {g.chips.map((c) => <span className="chip" key={c}>{c}</span>)}
+            </div>
+          </div>
+        ))}
+      </Rv>
+    </section>
+  );
+}
+
+function Home() {
+  return (
+    <main>
+      <Hero />
+      <Rv className="strip">
+        <div><b>2</b><span>GAMES</span></div><div><b>2</b><span>NIGHTS</span></div>
+        <div><b>1</b><span>GATE</span></div><div><b>∞</b><span>NIGHTMARES</span></div>
+      </Rv>
+      <Wall />
+      <GameSelect />
+
+      <section id="tapes">
+        <Rv className="k2">// RECOVERED TAPES</Rv>
+        <Rv as="h2">Two nights. <span>Zero sleep.</span></Rv>
+        <Rv className="tapes">
+          {TAPES.map((t) => (
+            <div className="tape" key={t.name}>
+              <header><span>{t.name}</span><span>{t.date}</span></header>
+              <ul>
+                {t.items.map(([time, title, sub]) => (
+                  <li key={time}><time>{time}</time><span>{title}<small>{sub}</small></span></li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </Rv>
+        <Rv as="p" className="note">// timings are tentative and will be confirmed soon</Rv>
+      </section>
+
+      <section id="brief">
+        <Rv className="k2">// MISSION BRIEFING</Rv>
+        <Rv as="h2">Know before you <span>enter</span></Rv>
+        <Rv className="brief">
+          {BRIEF.map(([b, p]) => <div className="bc" key={b}><b>{b}</b><p>{p}</p></div>)}
+        </Rv>
+      </section>
+
+      <section id="register">
+        <Rv className="k2">// ENTER THE GATE</Rv>
+        <Rv as="h2">Choose your game. <span>Register.</span></Rv>
+        <Rv className="reg2">
+          <a className="rc" href="#/bgmi" style={{ "--c": "#ff2433" }}><b>BGMI</b><span>Squad of 4 + 1 optional substitute</span><em>Register your squad ▶</em></a>
+          <a className="rc" href="#/fc26" style={{ "--c": "#4db3ff" }}><b>FC 26</b><span>FIFA · individual tournament</span><em>Register as a player ▶</em></a>
+        </Rv>
+      </section>
+
+      <Rv className="big">See you in the upside down</Rv>
+    </main>
+  );
+}
+
+function Footer() {
+  return (
+    <footer>
+      THE NIGHTMARE ARENA 2.0 · 30–31 OCT 2026 · {ORG.mail}<br />
+      Entry fee, prizes and venue: to be announced.
+    </footer>
+  );
+}
+
+/* =====================================================================
+   Registration: shared pieces
+   ===================================================================== */
+const V = {
+  email: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v),
+  phone: (v) => /^(\+?91)?[6-9]\d{9}$/.test(v.replace(/[\s-]/g, "")),
+  uid: (v) => /^\d{8,12}$/.test(v),
+};
+const ph10 = (v) => v.replace(/\D/g, "").slice(-10);
+
+// Duplicate checks only see registrations made in THIS browser (localStorage).
+// For real cross-device duplicate prevention you need a backend (see README note).
+const loadRegs = () => { try { return JSON.parse(localStorage.getItem("na2_regs") || "[]"); } catch { return []; } };
+const saveReg = (r) => { try { localStorage.setItem("na2_regs", JSON.stringify([...loadRegs(), r])); } catch { /* ignore */ } };
+
+function Field({ game, id, label, value, onChange, error, type = "text", ph = "", req = true }) {
+  return (
+    <div>
+      <label className="f" htmlFor={`${game}-${id}`}>{label}{req ? " *" : ""}</label>
+      <input id={`${game}-${id}`} className={error ? "bad" : ""} type={type} placeholder={ph}
+        autoComplete="off" value={value} onChange={(e) => onChange(e.target.value)} />
+      <div className="err">{error}</div>
+    </div>
+  );
+}
+
+function RulesBox({ game, checked, onChange, error, dupMsg }) {
+  return (
+    <>
+      <details className="rl">
+        <summary>Tournament rules (tap to read)</summary>
+        <ul>{RULES[game].map((r) => <li key={r}>{r}</li>)}</ul>
+      </details>
+      <label className="ck">
+        <input id={`${game}-rules`} type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <span>I have read and accept the tournament rules *</span>
+      </label>
+      <div className="err">{error}</div>
+      <div className="err" style={{ fontSize: ".9rem" }}>{dupMsg}</div>
+    </>
+  );
+}
+
+// form -> review -> done, with duplicate checks at both submit and confirm
+function useFlow({ game, pre, title, validate, collect, dup, rows }) {
+  const [stage, setStage] = useState("form");
+  const [errs, setErrs] = useState({});
+  const [dupMsg, setDupMsg] = useState("");
+  const [block, setBlock] = useState("");
+  const [d, setD] = useState(null);
+
+  const submit = (form) => {
+    const e = validate(form);
+    setErrs(e); setDupMsg("");
+    const keys = Object.keys(e);
+    if (keys.length) {
+      const el = document.getElementById(`${game}-${keys[0]}`);
+      el?.scrollIntoView({ block: "center" }); el?.focus({ preventScroll: true });
+      return;
+    }
+    const x = collect(form), m = dup(x, loadRegs());
+    if (m) { setDupMsg(m); return; }
+    setD(x); setBlock(""); setStage("review");
+  };
+  const confirm = () => {
+    const m = dup(d, loadRegs());
+    if (m) { setBlock(m); return; }
+    const x = { ...d, id: `${pre}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`, t: new Date().toISOString() };
+    saveReg(x); setD(x); setStage("done");
+  };
+  const edit = () => { setBlock(""); setStage("form"); };
+  const list = d ? rows(d) : [];
+  const text = d ? ["THE NIGHTMARE ARENA 2.0 · " + title, ...(d.id ? ["ID: " + d.id] : []), ...list.map(([a, b]) => `${a}: ${b}`)].join("\n") : "";
+  return { stage, errs, dupMsg, block, d, list, text, title, submit, confirm, edit };
+}
+
+function Review({ flow }) {
+  return (
+    <div className="sum">
+      <h3 className="ab">Review your registration</h3>
+      <table><tbody>{flow.list.map(([a, b]) => <tr key={a}><th>{a}</th><td>{b}</td></tr>)}</tbody></table>
+      {flow.block && <div className="err" style={{ fontSize: "1rem" }}>{flow.block}</div>}
+      <div className="act">
+        <button className="btn alt" onClick={flow.edit}>← Edit</button>
+        {!flow.block && <button className="btn" onClick={flow.confirm}>Confirm registration ▶</button>}
+      </div>
+    </div>
+  );
+}
+
+function Done({ flow }) {
+  const [copied, setCopied] = useState("Copy details");
+  const copy = () => navigator.clipboard.writeText(flow.text).then(() => setCopied("Copied ✓")).catch(() => setCopied("Copy failed"));
+  return (
+    <div className="sum">
+      <h3 className="ab">You're in. ☠</h3>
+      <p>Registration ID: <b>{flow.d.id}</b></p>
+      <p className="mut">Saved on this device. Send your details to the organisers below to lock your slot, and keep a screenshot of this screen.</p>
+      <div className="act">
+        <a className="btn" target="_blank" rel="noopener noreferrer" href={`https://wa.me/${ORG.wa}?text=${encodeURIComponent(flow.text)}`}>Send on WhatsApp</a>
+        <a className="btn alt" href={`mailto:${ORG.mail}?subject=${encodeURIComponent(flow.title + " " + flow.d.id)}&body=${encodeURIComponent(flow.text)}`}>Email</a>
+        <button className="btn alt" onClick={copy}>{copied}</button>
+      </div>
+    </div>
+  );
+}
+
+function PageShell({ kicker, title, badge, badgeRec = true, children }) {
+  return (
+    <div className="page on">
+      <div className="k2">{kicker}</div>
+      {title}
+      <div className="arc">
+        <header><span>{badge[0]}</span><span className={badgeRec ? "rec" : ""}>{badge[1]}</span></header>
+        {children}
+      </div>
+      <a className="back" href="#register">← back to games</a>
+    </div>
+  );
+}
+
+/* =====================================================================
+   BGMI registration page
+   ===================================================================== */
+const bgmiValidate = (f) => {
+  const e = {};
+  ["team", "cap", "mail", "ph"].forEach((k) => { if (!f[k].trim()) e[k] = "Required"; });
+  if (f.mail.trim() && !V.email(f.mail.trim())) e.mail = "Enter a valid email address";
+  if (f.ph.trim() && !V.phone(f.ph.trim())) e.ph = "Enter a valid 10-digit Indian mobile number";
+  const seenU = {}, seenN = {};
+  f.pl.forEach((p, i) => {
+    const n = p.n.trim(), u = p.u.trim();
+    if (i < 4 || n || u) { // players 1-4 required; substitute only if started
+      if (!n) e["n" + i] = "Required";
+      if (!u) e["u" + i] = "Required";
+    }
+    if (u && !V.uid(u)) e["u" + i] = "UID must be 8–12 digits";
+    else if (u) { if (seenU[u]) e["u" + i] = "Duplicate UID in your squad"; seenU[u] = 1; }
+    if (n) { const k = n.toLowerCase(); if (seenN[k]) e["n" + i] = "Duplicate in-game name in your squad"; seenN[k] = 1; }
+  });
+  if (!f.rules) e.rules = "You must accept the rules to register";
+  return e;
+};
+
+function BgmiPage() {
+  const [f, setF] = useState({ team: "", cap: "", mail: "", ph: "", rules: false, pl: Array.from({ length: 5 }, () => ({ n: "", u: "" })) });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  const setP = (i, k) => (v) => setF((x) => ({ ...x, pl: x.pl.map((p, j) => (j === i ? { ...p, [k]: v } : p)) }));
+
+  const flow = useFlow({
+    game: "bgmi", pre: "BGMI", title: "BGMI REGISTRATION", validate: bgmiValidate,
+    collect: (x) => ({ g: "bgmi", team: x.team.trim(), cap: x.cap.trim(), mail: x.mail.trim().toLowerCase(), ph: ph10(x.ph),
+      pl: x.pl.map((p) => ({ n: p.n.trim(), u: p.u.trim() })).filter((p) => p.n || p.u) }),
+    dup: (d, regs) => {
+      for (const r of regs) {
+        if (r.g !== "bgmi") continue;
+        if (r.team.toLowerCase() === d.team.toLowerCase()) return `A team named "${d.team}" is already registered.`;
+        if (r.mail === d.mail || r.ph === d.ph) return "This captain's email or phone is already registered with a team.";
+        const hit = d.pl.find((p) => r.pl.some((q) => q.u === p.u));
+        if (hit) return `UID ${hit.u} is already registered in another squad.`;
+      }
+      return "";
+    },
+    rows: (d) => [["Team", d.team], ["Captain", d.cap], ["Email", d.mail], ["Phone", d.ph],
+      ...d.pl.map((p, i) => [i < 4 ? "Player " + (i + 1) : "Substitute", `${p.n} · UID ${p.u}`])],
+  });
+  const E = flow.errs;
+
+  return (
+    <PageShell kicker="// REGISTRATION · BGMI" title={<h2>Squad <span>sign-up</span></h2>} badge={["SQUAD FORM", "4 + 1 SUB"]}>
+      {flow.stage === "form" && (
+        <form noValidate onSubmit={(e) => { e.preventDefault(); flow.submit(f); }}>
+          <div className="stp">Team details</div>
+          <div className="g2">
+            <Field game="bgmi" id="team" label="Team name" value={f.team} onChange={set("team")} error={E.team} />
+            <Field game="bgmi" id="cap" label="Team captain name" value={f.cap} onChange={set("cap")} error={E.cap} />
+          </div>
+          <div className="g2">
+            <Field game="bgmi" id="mail" type="email" ph="name@college.edu" label="Captain's email" value={f.mail} onChange={set("mail")} error={E.mail} />
+            <Field game="bgmi" id="ph" type="tel" ph="10-digit mobile" label="Captain's phone" value={f.ph} onChange={set("ph")} error={E.ph} />
+          </div>
+          <div className="stp">Player details</div>
+          {f.pl.map((p, i) => (
+            <div key={i}>
+              <div className="pl">PLAYER {i + 1}{i === 4 ? " · OPTIONAL SUBSTITUTE" : ""}</div>
+              <div className="g2">
+                <Field game="bgmi" id={"n" + i} label="In-game name" req={i < 4} value={p.n} onChange={setP(i, "n")} error={E["n" + i]} />
+                <Field game="bgmi" id={"u" + i} label="BGMI UID" ph="8–12 digits" req={i < 4} value={p.u} onChange={setP(i, "u")} error={E["u" + i]} />
+              </div>
+            </div>
+          ))}
+          <RulesBox game="bgmi" checked={f.rules} onChange={set("rules")} error={E.rules} dupMsg={flow.dupMsg} />
+          <button className="btn" style={{ alignSelf: "stretch" }} type="submit">Review registration ▶</button>
+        </form>
+      )}
+      {flow.stage === "review" && <Review flow={flow} />}
+      {flow.stage === "done" && <Done flow={flow} />}
+    </PageShell>
+  );
+}
+
+/* =====================================================================
+   FC 26 (FIFA) registration page
+   ===================================================================== */
+const mates = Math.max(0, FC26.teamSize - 1);
+
+const fcValidate = (f) => {
+  const e = {};
+  ["name", "mail", "ph"].forEach((k) => { if (!f[k].trim()) e[k] = "Required"; });
+  if (f.mail.trim() && !V.email(f.mail.trim())) e.mail = "Enter a valid email address";
+  if (f.ph.trim() && !V.phone(f.ph.trim())) e.ph = "Enter a valid 10-digit Indian mobile number";
+  f.mates.forEach((m, i) => { if (!m.n.trim()) e["pn" + i] = "Required"; });
+  if (!f.rules) e.rules = "You must accept the rules to register";
+  return e;
+};
+
+function Fc26Page() {
+  const [f, setF] = useState({ name: "", ign: "", mail: "", ph: "", rules: false, mates: Array.from({ length: mates }, () => ({ n: "", i: "" })) });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  const setM = (i, k) => (v) => setF((x) => ({ ...x, mates: x.mates.map((m, j) => (j === i ? { ...m, [k]: v } : m)) }));
+
+  const flow = useFlow({
+    game: "fc26", pre: "FC26", title: "FC 26 REGISTRATION", validate: fcValidate,
+    collect: (x) => ({ g: "fc26", name: x.name.trim(), ign: x.ign.trim(), mail: x.mail.trim().toLowerCase(), ph: ph10(x.ph),
+      fmt: FC26.format, mates: x.mates.map((m) => ({ n: m.n.trim(), i: m.i.trim() })) }),
+    dup: (d, regs) => (regs.some((r) => r.g === "fc26" && (r.mail === d.mail || r.ph === d.ph)) ? "This email or phone number is already registered for FC 26." : ""),
+    rows: (d) => [["Player", d.name], ["In-game name", d.ign || "—"], ["Email", d.mail], ["Phone", d.ph],
+      ["Format", FC26.labels[d.fmt] || d.fmt],
+      ...d.mates.map((m, i) => ["Teammate " + (i + 1), m.n + (m.i ? ` (${m.i})` : "")])],
+  });
+  const E = flow.errs;
+
+  return (
+    <PageShell kicker="// REGISTRATION · FC 26 (FIFA)" title={<h2>Player <span>sign-up</span></h2>}
+      badge={[FC26.format === "solo" ? "INDIVIDUAL TOURNAMENT" : "TEAM TOURNAMENT", FC26.labels[FC26.format] || FC26.format.toUpperCase()]}>
+      {flow.stage === "form" && (
+        <form noValidate onSubmit={(e) => { e.preventDefault(); flow.submit(f); }}>
+          <div className="stp">Player details</div>
+          <div className="g2">
+            <Field game="fc26" id="name" label="Player name" value={f.name} onChange={set("name")} error={E.name} />
+            <Field game="fc26" id="ign" label="In-game name" ph="optional" req={false} value={f.ign} onChange={set("ign")} />
+          </div>
+          <div className="g2">
+            <Field game="fc26" id="mail" type="email" ph="name@college.edu" label="Email address" value={f.mail} onChange={set("mail")} error={E.mail} />
+            <Field game="fc26" id="ph" type="tel" ph="10-digit mobile" label="Phone number" value={f.ph} onChange={set("ph")} error={E.ph} />
+          </div>
+          {f.mates.map((m, i) => (
+            <div key={i}>
+              <div className="pl">TEAMMATE {i + 1}</div>
+              <div className="g2">
+                <Field game="fc26" id={"pn" + i} label="Player name" value={m.n} onChange={setM(i, "n")} error={E["pn" + i]} />
+                <Field game="fc26" id={"pi" + i} label="In-game name" ph="optional" req={false} value={m.i} onChange={setM(i, "i")} />
+              </div>
+            </div>
+          ))}
+          <RulesBox game="fc26" checked={f.rules} onChange={set("rules")} error={E.rules} dupMsg={flow.dupMsg} />
+          <button className="btn" style={{ alignSelf: "stretch" }} type="submit">Review registration ▶</button>
+        </form>
+      )}
+      {flow.stage === "review" && <Review flow={flow} />}
+      {flow.stage === "done" && <Done flow={flow} />}
+    </PageShell>
+  );
+}
+
+/* =====================================================================
+   Admin panel
+   ===================================================================== */
+const ADMIN_PASS = "nightmare2026"; // ← change this password
+
+function AdminPage() {
+  const [authed, setAuthed] = useState(() => sessionStorage.getItem("na2_admin") === "1");
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [regs, setRegs] = useState([]);
+  const [filter, setFilter] = useState("all");   // "all" | "bgmi" | "fc26"
+  const [search, setSearch] = useState("");
+  const [detail, setDetail] = useState(null);    // registration object to show
+
+  // load regs whenever authed changes
+  useEffect(() => {
+    if (authed) setRegs(loadRegs());
+  }, [authed]);
+
+  const login = (e) => {
+    e.preventDefault();
+    if (pw === ADMIN_PASS) { sessionStorage.setItem("na2_admin", "1"); setAuthed(true); setErr(""); }
+    else { setErr("Wrong password. Try again."); setPw(""); }
+  };
+  const logout = () => { sessionStorage.removeItem("na2_admin"); setAuthed(false); setRegs([]); };
+  const deleteReg = (id) => {
+    if (!window.confirm("Delete registration " + id + "?")) return;
+    const next = regs.filter((r) => r.id !== id);
+    localStorage.setItem("na2_regs", JSON.stringify(next));
+    setRegs(next);
+    if (detail?.id === id) setDetail(null);
+  };
+  const clearAll = () => {
+    if (!window.confirm("DELETE ALL registrations? This cannot be undone.")) return;
+    localStorage.setItem("na2_regs", "[]");
+    setRegs([]); setDetail(null);
+  };
+  const exportCSV = () => {
+    const rows = [["ID", "Game", "Name/Team", "Captain/IGN", "Email", "Phone", "Registered at"]];
+    regs.forEach((r) => {
+      if (r.g === "bgmi") rows.push([r.id, "BGMI", r.team, r.cap, r.mail, r.ph, r.t]);
+      if (r.g === "fc26") rows.push([r.id, "FC26", r.name, r.ign || "—", r.mail, r.ph, r.t]);
+    });
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = "nightmare_arena_registrations.csv";
+    a.click();
+  };
+
+  const visible = regs.filter((r) => {
+    if (filter !== "all" && r.g !== filter) return false;
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    const haystack = (r.g === "bgmi")
+      ? `${r.id} ${r.team} ${r.cap} ${r.mail} ${r.ph}`
+      : `${r.id} ${r.name} ${r.ign} ${r.mail} ${r.ph}`;
+    return haystack.toLowerCase().includes(q);
+  });
+
+  const bgmiCount = regs.filter((r) => r.g === "bgmi").length;
+  const fc26Count = regs.filter((r) => r.g === "fc26").length;
+
+  // ── LOGIN SCREEN ──────────────────────────────────────────────────────
+  if (!authed) return (
+    <div className="adm-wrap">
+      <div className="adm-login">
+        <div className="adm-login-badge">ADMIN ACCESS</div>
+        <h2 className="ab">Command<br /><span>Center</span></h2>
+        <p style={{ color: "var(--dim)", marginBottom: 28 }}>Restricted area. Enter your password to proceed.</p>
+        <form onSubmit={login}>
+          <label className="f" htmlFor="adm-pw">Password</label>
+          <input id="adm-pw" type="password" autoFocus autoComplete="current-password"
+            value={pw} onChange={(e) => setPw(e.target.value)}
+            style={{ width: "100%", background: "none", border: 0, borderBottom: "2px solid var(--dim)", color: "var(--bone)", fontFamily: "inherit", fontSize: "1.2rem", padding: "6px 0 6px", marginBottom: 6 }} />
+          {err && <div style={{ color: "var(--red)", fontSize: ".85rem", marginBottom: 10 }}>{err}</div>}
+          <button className="btn" type="submit" style={{ width: "100%", marginTop: 14 }}>Enter ▶</button>
+        </form>
+        <a href="#" style={{ display: "block", marginTop: 20, color: "var(--dim)", fontSize: ".8rem" }}>← Back to site</a>
+      </div>
+    </div>
+  );
+
+  // ── DETAIL MODAL ──────────────────────────────────────────────────────
+  const DetailModal = ({ r, onClose }) => {
+    const rows = r.g === "bgmi"
+      ? [["ID", r.id], ["Game", "BGMI"], ["Team", r.team], ["Captain", r.cap], ["Email", r.mail], ["Phone", r.ph],
+          ["Registered", new Date(r.t).toLocaleString()],
+          ...( r.pl || []).map((p, i) => [i < 4 ? `Player ${i + 1}` : "Sub", `${p.n} · UID ${p.u}`])]
+      : [["ID", r.id], ["Game", "FC 26"], ["Player", r.name], ["In-game", r.ign || "—"], ["Email", r.mail], ["Phone", r.ph],
+          ["Format", FC26.labels[r.fmt] || r.fmt], ["Registered", new Date(r.t).toLocaleString()],
+          ...(r.mates || []).map((m, i) => [`Teammate ${i + 1}`, m.n + (m.i ? ` (${m.i})` : "")])];
+    return (
+      <div className="adm-modal-backdrop" onClick={onClose}>
+        <div className="adm-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="adm-modal-head">
+            <span style={{ color: r.g === "bgmi" ? "#4db3ff" : "var(--red)" }}>{r.g === "bgmi" ? "BGMI" : "FC 26"} · {r.id}</span>
+            <button onClick={onClose} style={{ background: "none", border: 0, color: "var(--dim)", fontSize: 1.4 + "rem", cursor: "pointer" }}>✕</button>
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}>
+            <tbody>
+              {rows.map(([a, b]) => (
+                <tr key={a}>
+                  <th style={{ textAlign: "left", color: "var(--amber)", fontWeight: 400, padding: "6px 12px 6px 0", width: "35%", verticalAlign: "top" }}>{a}</th>
+                  <td style={{ padding: "6px 0", borderBottom: "1px dashed var(--line)", wordBreak: "break-word" }}>{b}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+            <button className="btn alt" style={{ flex: 1 }} onClick={onClose}>Close</button>
+            <button className="btn" style={{ flex: 1, background: "var(--red)" }} onClick={() => { deleteReg(r.id); onClose(); }}>Delete ✕</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── DASHBOARD ─────────────────────────────────────────────────────────
+  return (
+    <div className="adm-wrap">
+      {detail && <DetailModal r={detail} onClose={() => setDetail(null)} />}
+      <div className="adm-panel">
+        {/* Header */}
+        <div className="adm-header">
+          <div>
+            <div className="adm-kicker">// ADMIN · NIGHTMARE ARENA 2.0</div>
+            <h2 className="ab" style={{ margin: "4px 0 0", fontSize: "clamp(1.6rem,4vw,2.6rem)" }}>
+              Command <span>Center</span>
+            </h2>
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <button className="btn alt" onClick={exportCSV}>Export CSV</button>
+            <button className="btn alt" style={{ borderColor: "var(--red)", color: "var(--red)" }} onClick={clearAll}>Clear All</button>
+            <button className="btn" onClick={logout}>Logout</button>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="adm-stats">
+          <div className="adm-stat">
+            <span>{regs.length}</span>
+            <label>Total Registrations</label>
+          </div>
+          <div className="adm-stat" style={{ "--sc": "#4db3ff" }}>
+            <span>{bgmiCount}</span>
+            <label>BGMI Teams</label>
+          </div>
+          <div className="adm-stat" style={{ "--sc": "var(--red)" }}>
+            <span>{fc26Count}</span>
+            <label>FC 26 Players</label>
+          </div>
+          <div className="adm-stat" style={{ "--sc": "var(--amber)" }}>
+            <span>{bgmiCount * 4}</span>
+            <label>Est. BGMI Players</label>
+          </div>
+        </div>
+
+        {/* Filters + search */}
+        <div className="adm-toolbar">
+          <div className="adm-tabs">
+            {["all", "bgmi", "fc26"].map((t) => (
+              <button key={t} className={"adm-tab" + (filter === t ? " active" : "")} onClick={() => setFilter(t)}>
+                {t === "all" ? "ALL" : t === "bgmi" ? "BGMI" : "FC 26"}
+              </button>
+            ))}
+          </div>
+          <input
+            className="adm-search"
+            type="search"
+            placeholder="Search by name, email, phone…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        {/* Registration list */}
+        {visible.length === 0 ? (
+          <div className="adm-empty">
+            {regs.length === 0 ? "No registrations yet." : "No results match your filter."}
+          </div>
+        ) : (
+          <div className="adm-list">
+            {visible.map((r) => {
+              const isBgmi = r.g === "bgmi";
+              const name = isBgmi ? r.team : r.name;
+              const sub = isBgmi ? `Captain: ${r.cap}` : `IGN: ${r.ign || "—"}`;
+              const color = isBgmi ? "#4db3ff" : "var(--red)";
+              return (
+                <div className="adm-row" key={r.id} onClick={() => setDetail(r)}>
+                  <div className="adm-row-game" style={{ color }}>
+                    {isBgmi ? "BGMI" : "FC26"}
+                  </div>
+                  <div className="adm-row-main">
+                    <b>{name}</b>
+                    <span>{sub}</span>
+                  </div>
+                  <div className="adm-row-meta">
+                    <span>{r.mail}</span>
+                    <span style={{ color: "var(--dim)", fontSize: ".75rem" }}>{r.id}</span>
+                  </div>
+                  <div className="adm-row-time">
+                    {new Date(r.t).toLocaleDateString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                  <button className="adm-del" title="Delete" onClick={(e) => { e.stopPropagation(); deleteReg(r.id); }}>✕</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <a href="#" className="back" style={{ display: "block", marginTop: 32 }}>← Back to site</a>
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
+   App: tiny hash router (#/bgmi, #/fc26, #/admin, everything else = home)
+   ===================================================================== */
+export default function App() {
+  const hash = useHash();
+  const route = (hash.match(/^#\/(bgmi|fc26|admin)$/) || [])[1];
+
+  useEffect(() => {
+    if (route) { window.scrollTo(0, 0); return; }
+    if (hash.length > 1) { // returning home to an anchor like #register
+      const t = setTimeout(() => { try { document.querySelector(hash)?.scrollIntoView(); } catch { /* ignore */ } }, 60);
+      return () => clearTimeout(t);
+    }
+  }, [route, hash]);
+
+  if (route === "admin") return <><Spores /><RedFlash /><Hud /><Nav /><AdminPage /></>;
+
+  return (
+    <>
+      <Spores /><RedFlash /><Hud /><Nav />
+      {route === "bgmi" ? <BgmiPage /> : route === "fc26" ? <Fc26Page /> : <><Home /><Footer /></>}
+    </>
+  );
+}
