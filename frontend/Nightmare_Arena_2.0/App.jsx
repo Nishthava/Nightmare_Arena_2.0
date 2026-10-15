@@ -29,6 +29,10 @@ const RULES = {
 const COLORS = ["#ff2433", "#4db3ff", "#ffb23e", "#7dff7d", "#ff6ad5"];
 const WALL_ROWS = ["ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ"];
 const WALL_MSGS = ["RUN", "BGMI VS FIFA", "SEE YOU 30 OCT", "JOIN THE PARTY"];
+const REGISTRATION_OPEN_KEY = "na2_registration_open";
+const FC26_BRACKET_KEY = "na2_fc26_bracket";
+const BGMI_LEADERBOARD_KEY = "na2_bgmi_leaderboard";
+const DEFAULT_PLACEMENT_POINTS = [10, 6, 5, 4, 3, 2, 1, 1];
 const SCRAWLS = [
   ["RUN", "12%", "62%", -6],
   ["IT'S COMING", "64%", "16%", 4],
@@ -36,8 +40,8 @@ const SCRAWLS = [
   ["TURN BACK", "6%", "88%", 7],
 ];
 const GAMES = [
-  { no: "01", name: "BGMI", c: "#ff2433", text: "Squad of four. Drop in, loot fast and outlast every team when the lights flicker out.", chips: ["SQUAD / 4", "BATTLE ROYALE", "PRIZE: TBA"] },
-  { no: "02", name: "FIFA", c: "#4db3ff", text: "One versus one on the virtual pitch. Knockout bracket, no second chances.", chips: ["SOLO / 1v1", "KNOCKOUT", "PRIZE: TBA"] },
+  { no: "01", name: "BGMI", c: "#ff2433", image: "/bgmi-horror.jpg", text: "Squad of four. Drop in, loot fast and outlast every team when the lights flicker out.", chips: ["SQUAD / 4", "BATTLE ROYALE", "PRIZE: TBA"] },
+  { no: "02", name: "FIFA", c: "#4db3ff", image: "/fifa-haunted-champions.png", text: "One versus one on the virtual pitch. Knockout bracket, no second chances.", chips: ["SOLO / 1v1", "KNOCKOUT", "PRIZE: TBA"] },
 ];
 const TAPES = [
   { name: "TAPE 01", date: "30.10.26", items: [
@@ -94,6 +98,266 @@ function useHash() {
     return () => window.removeEventListener("hashchange", fn);
   }, []);
   return h;
+}
+
+function useRegistrationStatus() {
+  const [status, setStatus] = useState(() => {
+    try {
+      return { open: localStorage.getItem(REGISTRATION_OPEN_KEY) !== "false", error: "" };
+    } catch {
+      return { open: true, error: "Could not read registration status from this browser." };
+    }
+  });
+
+  useEffect(() => {
+    const sync = (event) => {
+      if (event.key === REGISTRATION_OPEN_KEY || event.key === null) {
+        setStatus({ open: event.newValue !== "false", error: "" });
+      }
+    };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
+
+  const setOpen = (open) => {
+    try {
+      localStorage.setItem(REGISTRATION_OPEN_KEY, String(open));
+      setStatus({ open, error: "" });
+    } catch {
+      setStatus((current) => ({ ...current, error: "Could not save registration status. Check this browser's storage settings." }));
+    }
+  };
+
+  return { ...status, setOpen };
+}
+
+function createSeedOrder(size) {
+  let seeds = [1, 2];
+  while (seeds.length < size) {
+    const nextSize = seeds.length * 2;
+    seeds = seeds.flatMap((seed) => [seed, nextSize + 1 - seed]);
+  }
+  return seeds;
+}
+
+function createBracket(registrations) {
+  const entrants = registrations
+    .filter((registration) => registration.g === "fc26")
+    .map((registration) => ({
+      id: registration.id,
+      name: registration.name + (registration.ign ? ` (${registration.ign})` : ""),
+    }));
+  if (entrants.length === 0) return null;
+
+  const size = Math.max(2, 2 ** Math.ceil(Math.log2(entrants.length)));
+  const seeds = createSeedOrder(size);
+  const slots = seeds.map((seed) => entrants[seed - 1]?.id ?? null);
+  const rounds = [];
+
+  for (let roundSize = size; roundSize >= 2; roundSize /= 2) {
+    const matches = [];
+    for (let i = 0; i < roundSize; i += 2) {
+      const players = roundSize === size
+        ? [slots[i], slots[i + 1]]
+        : [null, null];
+      matches.push({
+        players,
+        winnerId: players[0] && !players[1] ? players[0] : null,
+      });
+    }
+    rounds.push({ name: roundName(rounds.length, Math.log2(size)), matches });
+  }
+
+  for (let i = 1; i < rounds.length; i += 1) {
+    rounds[i].matches = rounds[i].matches.map((match, matchIndex) => ({
+      ...match,
+      players: [
+        rounds[i - 1].matches[matchIndex * 2]?.winnerId ?? null,
+        rounds[i - 1].matches[matchIndex * 2 + 1]?.winnerId ?? null,
+      ],
+    }));
+  }
+  return { entrants, rounds };
+}
+
+function roundName(index, totalRounds) {
+  const remaining = totalRounds - index;
+  if (remaining === 1) return "Final";
+  if (remaining === 2) return "Semi-finals";
+  if (remaining === 3) return "Quarter-finals";
+  return `Round ${index + 1}`;
+}
+
+function readBracket() {
+  try {
+    const raw = localStorage.getItem(FC26_BRACKET_KEY);
+    if (!raw) return { bracket: null, error: "" };
+    const bracket = JSON.parse(raw);
+    const validEntrants = Array.isArray(bracket.entrants)
+      && bracket.entrants.every((entrant) => entrant
+        && typeof entrant.id === "string"
+        && typeof entrant.name === "string");
+    const validRounds = Array.isArray(bracket.rounds)
+      && bracket.rounds.every((round) => round
+        && typeof round.name === "string"
+        && Array.isArray(round.matches)
+        && round.matches.every((match) => match
+          && Array.isArray(match.players)
+          && match.players.length === 2
+          && match.players.every((id) => id === null || typeof id === "string")
+          && (match.winnerId === null || typeof match.winnerId === "string")));
+    if (!validEntrants || !validRounds) {
+      return { bracket: null, error: "The saved FC 26 bracket is invalid. Generate a new bracket to replace it." };
+    }
+    return { bracket, error: "" };
+  } catch {
+    return { bracket: null, error: "Could not read the FC 26 bracket from this browser." };
+  }
+}
+
+function useFc26Bracket() {
+  const [state, setState] = useState(readBracket);
+
+  useEffect(() => {
+    const sync = (event) => {
+      if (event.key === FC26_BRACKET_KEY || event.key === null) setState(readBracket());
+    };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
+
+  const saveBracket = (bracket) => {
+    try {
+      if (bracket) localStorage.setItem(FC26_BRACKET_KEY, JSON.stringify(bracket));
+      else localStorage.removeItem(FC26_BRACKET_KEY);
+      setState({ bracket, error: "" });
+    } catch {
+      setState((current) => ({ ...current, error: "Could not save the FC 26 bracket. Check this browser's storage settings." }));
+    }
+  };
+
+  return { ...state, saveBracket };
+}
+
+function advanceBracket(bracket, roundIndex, matchIndex, winnerId) {
+  const rounds = bracket.rounds.map((round) => ({
+    ...round,
+    matches: round.matches.map((match) => ({ ...match, players: [...match.players] })),
+  }));
+  const match = rounds[roundIndex]?.matches[matchIndex];
+  if (!match || !match.players.includes(winnerId) || !match.players[0] || !match.players[1]) return bracket;
+  match.winnerId = winnerId;
+
+  for (let i = roundIndex + 1; i < rounds.length; i += 1) {
+    rounds[i].matches = rounds[i].matches.map((nextMatch, nextIndex) => {
+      const players = [
+        rounds[i - 1].matches[nextIndex * 2]?.winnerId ?? null,
+        rounds[i - 1].matches[nextIndex * 2 + 1]?.winnerId ?? null,
+      ];
+      return {
+        ...nextMatch,
+        players,
+        winnerId: nextMatch.winnerId && players.includes(nextMatch.winnerId) ? nextMatch.winnerId : null,
+      };
+    });
+  }
+  return { ...bracket, rounds };
+}
+
+function defaultBgmiLeaderboard() {
+  return {
+    pointsPerKill: 1,
+    placementPoints: Array.from({ length: 25 }, (_, index) => DEFAULT_PLACEMENT_POINTS[index] ?? 0),
+    matches: [],
+  };
+}
+
+function isValidBgmiLeaderboard(value) {
+  return value
+    && Number.isInteger(value.pointsPerKill)
+    && value.pointsPerKill >= 0
+    && Array.isArray(value.placementPoints)
+    && value.placementPoints.every((points) => Number.isInteger(points) && points >= 0)
+    && Array.isArray(value.matches)
+    && value.matches.every((match) => match
+      && typeof match.id === "string"
+      && typeof match.name === "string"
+      && match.scores
+      && typeof match.scores === "object"
+      && !Array.isArray(match.scores)
+      && Object.values(match.scores).every((score) => score
+        && (score.placement === null || (Number.isInteger(score.placement) && score.placement > 0))
+        && (score.kills === null || (Number.isInteger(score.kills) && score.kills >= 0))));
+}
+
+function readBgmiLeaderboard() {
+  try {
+    const raw = localStorage.getItem(BGMI_LEADERBOARD_KEY);
+    if (!raw) return { leaderboard: defaultBgmiLeaderboard(), error: "" };
+    const leaderboard = JSON.parse(raw);
+    if (!isValidBgmiLeaderboard(leaderboard)) {
+      return { leaderboard: defaultBgmiLeaderboard(), error: "The saved BGMI leaderboard is invalid. Create a new match to replace it." };
+    }
+    return { leaderboard, error: "" };
+  } catch {
+    return { leaderboard: defaultBgmiLeaderboard(), error: "Could not read the BGMI leaderboard from this browser." };
+  }
+}
+
+function useBgmiLeaderboard() {
+  const [state, setState] = useState(readBgmiLeaderboard);
+
+  useEffect(() => {
+    const sync = (event) => {
+      if (event.key === BGMI_LEADERBOARD_KEY || event.key === null) setState(readBgmiLeaderboard());
+    };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
+
+  const saveLeaderboard = (leaderboard) => {
+    try {
+      localStorage.setItem(BGMI_LEADERBOARD_KEY, JSON.stringify(leaderboard));
+      setState({ leaderboard, error: "" });
+    } catch {
+      setState((current) => ({ ...current, error: "Could not save the BGMI leaderboard. Check this browser's storage settings." }));
+    }
+  };
+
+  return { ...state, saveLeaderboard };
+}
+
+function getBgmiStandings(teams, leaderboard) {
+  const standings = teams.map((team) => {
+    let kills = 0;
+    let placementPoints = 0;
+    let matchesPlayed = 0;
+    let bestPlacement = Infinity;
+
+    leaderboard.matches.forEach((match) => {
+      const score = match.scores[team.id];
+      if (!score || score.placement === null || score.kills === null) return;
+      matchesPlayed += 1;
+      kills += score.kills;
+      placementPoints += leaderboard.placementPoints[score.placement - 1] ?? 0;
+      bestPlacement = Math.min(bestPlacement, score.placement);
+    });
+
+    return {
+      ...team,
+      kills,
+      placementPoints,
+      matchesPlayed,
+      bestPlacement,
+      points: placementPoints + kills * leaderboard.pointsPerKill,
+    };
+  });
+
+  return standings.sort((a, b) =>
+    b.points - a.points
+    || b.kills - a.kills
+    || a.bestPlacement - b.bestPlacement
+    || a.team.localeCompare(b.team));
 }
 
 /* =====================================================================
@@ -200,7 +464,7 @@ function Hero() {
         ty = r.height * (0.5 + 0.34 * Math.sin((now - t0) / 1700 + 1));
       }
       cx += (tx - cx) * 0.12; cy += (ty - cy) * 0.12;
-      const rad = (innerWidth < 720 ? 120 : 170) * (Math.random() < 0.015 ? 0.5 : 1);
+      const rad = (innerWidth < 720 ? 180 : 260) * (Math.random() < 0.015 ? 0.75 : 1);
       h.style.setProperty("--x", cx + "px");
       h.style.setProperty("--y", cy + "px");
       h.style.setProperty("--r", rad + "px");
@@ -309,7 +573,14 @@ function GameSelect() {
       <Rv as="h2">Pick your <span>battleground</span></Rv>
       <Rv className="sel">
         {GAMES.map((g, i) => (
-          <div key={g.name} className={"p" + (active === i ? " on" : "")} style={{ "--c": g.c }}
+          <div key={g.name} className={"p" + (active === i ? " on" : "")} style={{
+            "--c": g.c,
+            ...(g.image ? {
+              backgroundImage: `linear-gradient(0deg, rgba(4,6,12,.78), rgba(4,6,12,.12)), url("${g.image}")`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            } : {}),
+          }}
             onMouseEnter={() => canHover && setActive(i)} onClick={() => setActive(i)}>
             <span className="no">{g.no}</span>
             <h3>{g.name}</h3>
@@ -324,7 +595,233 @@ function GameSelect() {
   );
 }
 
-function Home() {
+function BracketBoard({ bracket, onWinner }) {
+  const names = new Map(bracket.entrants.map((entrant) => [entrant.id, entrant.name]));
+  return (
+    <div className="fc-bracket">
+      {bracket.rounds.map((round, roundIndex) => (
+        <div className="fc-bracket-round" key={round.name}>
+          <h3>{round.name}</h3>
+          {round.matches.map((match, matchIndex) => (
+            <div className="fc-match" key={`${round.name}-${matchIndex}`}>
+              <span className="fc-match-label">MATCH {matchIndex + 1}</span>
+              {match.players.map((playerId, playerIndex) => {
+                const isWinner = playerId && match.winnerId === playerId;
+                const playerName = playerId
+                  ? names.get(playerId) || "Registration removed"
+                  : roundIndex === 0 ? "BYE" : "TBD";
+                return (
+                  <button
+                    className={`fc-match-player${isWinner ? " winner" : ""}`}
+                    key={playerId || `empty-${playerIndex}`}
+                    type="button"
+                    disabled={!onWinner || !playerId || !match.players[0] || !match.players[1]}
+                    onClick={() => onWinner?.(roundIndex, matchIndex, playerId)}
+                    aria-pressed={Boolean(isWinner)}
+                  >
+                    <span>{playerName}</span>
+                    {isWinner && <b>WINNER</b>}
+                  </button>
+                );
+              })}
+              {match.winnerId && (
+                <span className="fc-match-advance">
+                  {round.name === "Final" ? "Tournament champion" : "Winner advances"}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PublicBracket({ bracket, error }) {
+  if (!bracket && !error) return null;
+  return (
+    <section id="fc26-bracket">
+      <Rv className="k2">// FC 26 · KNOCKOUT</Rv>
+      <Rv as="h2">Tournament <span>bracket</span></Rv>
+      {error
+        ? <div className="reg-closed" role="alert">{error}</div>
+        : <Rv><BracketBoard bracket={bracket} /></Rv>}
+    </section>
+  );
+}
+
+function PublicBgmiLeaderboard({ teams, leaderboard, error }) {
+  if (leaderboard.matches.length === 0 && !error) return null;
+  const standings = getBgmiStandings(teams, leaderboard);
+  return (
+    <section id="bgmi-leaderboard">
+      <Rv className="k2">// BGMI · LIVE STANDINGS</Rv>
+      <Rv as="h2">Battle <span>leaderboard</span></Rv>
+      {error ? <div className="reg-closed" role="alert">{error}</div> : (
+        <Rv className="bgmi-leaderboard-wrap">
+          <p className="bgmi-scoring-note">
+            {leaderboard.matches.length} {leaderboard.matches.length === 1 ? "match" : "matches"} recorded
+            {" · "}{leaderboard.pointsPerKill} {leaderboard.pointsPerKill === 1 ? "point" : "points"} per kill
+          </p>
+          {standings.length === 0 ? <p>No registered BGMI teams are available.</p> : (
+            <div className="bgmi-table-scroll">
+              <table className="bgmi-table">
+                <thead>
+                  <tr><th>Rank</th><th>Team</th><th>Matches</th><th>Kills</th><th>Placement pts</th><th>Total pts</th></tr>
+                </thead>
+                <tbody>
+                  {standings.map((team, index) => (
+                    <tr key={team.id}>
+                      <td>{index + 1}</td>
+                      <td><b>{team.team}</b></td>
+                      <td>{team.matchesPlayed}</td>
+                      <td>{team.kills}</td>
+                      <td>{team.placementPoints}</td>
+                      <td><b className="bgmi-total-points">{team.points}</b></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Rv>
+      )}
+    </section>
+  );
+}
+
+function BgmiLeaderboardAdmin({ teams, leaderboard, saveLeaderboard, error }) {
+  const [pointsPerKill, setPointsPerKill] = useState(leaderboard.pointsPerKill);
+  const [placementPoints, setPlacementPoints] = useState(leaderboard.placementPoints);
+  const [scoringError, setScoringError] = useState("");
+
+  useEffect(() => {
+    setPointsPerKill(leaderboard.pointsPerKill);
+    setPlacementPoints(leaderboard.placementPoints);
+  }, [leaderboard.pointsPerKill, leaderboard.placementPoints]);
+
+  const visiblePlacements = Math.max(1, teams.length);
+  const saveScoringRules = () => {
+    const killPoints = Number(pointsPerKill);
+    const placements = Array.from({ length: Math.max(25, teams.length) }, (_, index) => Number(placementPoints[index] ?? 0));
+    if (!Number.isInteger(killPoints) || killPoints < 0
+      || placements.some((points) => !Number.isInteger(points) || points < 0)) {
+      setScoringError("Scoring values must be whole numbers of zero or more.");
+      return;
+    }
+    setScoringError("");
+    saveLeaderboard({ ...leaderboard, pointsPerKill: killPoints, placementPoints: placements });
+  };
+
+  const addMatch = () => {
+    if (teams.length === 0) return;
+    const match = {
+      id: `bgmi-${Date.now().toString(36)}`,
+      name: `Match ${leaderboard.matches.length + 1}`,
+      scores: Object.fromEntries(teams.map((team) => [team.id, { placement: null, kills: null }])),
+    };
+    saveLeaderboard({ ...leaderboard, matches: [...leaderboard.matches, match] });
+  };
+
+  const updateScore = (matchId, teamId, field, rawValue) => {
+    const value = rawValue === "" ? null : Number(rawValue);
+    if (value !== null && (!Number.isInteger(value) || value < (field === "placement" ? 1 : 0)
+      || (field === "placement" && value > teams.length))) return;
+    const matches = leaderboard.matches.map((match) => {
+      if (match.id !== matchId) return match;
+      const previous = match.scores[teamId] || { placement: null, kills: null };
+      return { ...match, scores: { ...match.scores, [teamId]: { ...previous, [field]: value } } };
+    });
+    saveLeaderboard({ ...leaderboard, matches });
+  };
+
+  const removeMatch = (matchId) => {
+    if (!window.confirm("Delete this match and its scores?")) return;
+    saveLeaderboard({ ...leaderboard, matches: leaderboard.matches.filter((match) => match.id !== matchId) });
+  };
+
+  return (
+    <section className="adm-bgmi-leaderboard">
+      <div className="adm-bgmi-header">
+        <div>
+          <div className="adm-kicker">// BGMI · MATCH SCORING</div>
+          <h3>BGMI leaderboard</h3>
+          <p>Enter each squad's placement and kills for every match. The standings update automatically.</p>
+        </div>
+        <button className="btn" onClick={addMatch} disabled={teams.length === 0}>Add match</button>
+      </div>
+      {error && <div className="adm-setting-error" role="alert">{error}</div>}
+
+      <div className="adm-bgmi-rules">
+        <h4>Scoring rules</h4>
+        <label className="adm-points-kill">
+          Points per kill
+          <input type="number" min="0" step="1" value={pointsPerKill}
+            onChange={(event) => setPointsPerKill(event.target.value === "" ? "" : Number(event.target.value))} />
+        </label>
+        <div className="adm-placement-grid">
+          {Array.from({ length: visiblePlacements }, (_, index) => (
+            <label key={index}>
+              Place {index + 1}
+              <input type="number" min="0" step="1" value={placementPoints[index] ?? 0}
+                onChange={(event) => {
+                  const next = [...placementPoints];
+                  next[index] = event.target.value === "" ? "" : Number(event.target.value);
+                  setPlacementPoints(next);
+                }} />
+            </label>
+          ))}
+        </div>
+        {scoringError && <div className="adm-setting-error" role="alert">{scoringError}</div>}
+        <button className="btn alt" onClick={saveScoringRules}>Save scoring rules</button>
+      </div>
+
+      {teams.length === 0
+        ? <div className="adm-empty">Register BGMI squads before adding matches.</div>
+        : leaderboard.matches.length === 0
+          ? <p className="adm-bracket-entrants">Add a match to start recording results and publish the leaderboard.</p>
+          : leaderboard.matches.map((match) => (
+            <div className="adm-bgmi-match" key={match.id}>
+              <header>
+                <h4>{match.name}</h4>
+                <button className="adm-del" onClick={() => removeMatch(match.id)}>Delete match</button>
+              </header>
+              <div className="bgmi-table-scroll">
+                <table className="bgmi-table adm-bgmi-table">
+                  <thead><tr><th>Team</th><th>Placement</th><th>Kills</th><th>Match points</th></tr></thead>
+                  <tbody>
+                    {teams.map((team) => {
+                      const score = match.scores[team.id] || { placement: null, kills: null };
+                      const points = score.placement !== null && score.kills !== null
+                        ? (leaderboard.placementPoints[score.placement - 1] ?? 0) + score.kills * leaderboard.pointsPerKill
+                        : "—";
+                      return (
+                        <tr key={team.id}>
+                          <td><b>{team.team}</b></td>
+                          <td>
+                            <input aria-label={`${team.team} placement in ${match.name}`} type="number" min="1" max={teams.length} step="1"
+                              value={score.placement ?? ""}
+                              onChange={(event) => updateScore(match.id, team.id, "placement", event.target.value)} />
+                          </td>
+                          <td>
+                            <input aria-label={`${team.team} kills in ${match.name}`} type="number" min="0" step="1"
+                              value={score.kills ?? ""}
+                              onChange={(event) => updateScore(match.id, team.id, "kills", event.target.value)} />
+                          </td>
+                          <td>{points}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+    </section>
+  );
+}
+
+function Home({ registrationOpen, bracket, bracketError, bgmiTeams, bgmiLeaderboard, bgmiLeaderboardError }) {
   return (
     <main>
       <Hero />
@@ -363,12 +860,24 @@ function Home() {
 
       <section id="register">
         <Rv className="k2">// ENTER THE GATE</Rv>
-        <Rv as="h2">Choose your game. <span>Register.</span></Rv>
-        <Rv className="reg2">
-          <a className="rc" href="#/bgmi" style={{ "--c": "#ff2433" }}><b>BGMI</b><span>Squad of 4 + 1 optional substitute</span><em>Register your squad ▶</em></a>
-          <a className="rc" href="#/fc26" style={{ "--c": "#4db3ff" }}><b>FC 26</b><span>FIFA · individual tournament</span><em>Register as a player ▶</em></a>
-        </Rv>
+        {registrationOpen ? (
+          <>
+            <Rv as="h2">Choose your game. <span>Register.</span></Rv>
+            <Rv className="reg2">
+              <a className="rc" href="#/bgmi" style={{ "--c": "#ff2433" }}><b>BGMI</b><span>Squad of 4 + 1 optional substitute</span><em>Register your squad ▶</em></a>
+              <a className="rc" href="#/fc26" style={{ "--c": "#4db3ff" }}><b>FC 26</b><span>FIFA · individual tournament</span><em>Register as a player ▶</em></a>
+            </Rv>
+          </>
+        ) : (
+          <Rv className="reg-closed">
+            <b>REGISTRATION IS CLOSED</b>
+            <p>Sign-ups are not being accepted right now. Check back later for updates.</p>
+          </Rv>
+        )}
       </section>
+
+      <PublicBracket bracket={bracket} error={bracketError} />
+      <PublicBgmiLeaderboard teams={bgmiTeams} leaderboard={bgmiLeaderboard} error={bgmiLeaderboardError} />
 
       <Rv className="big">See you in the upside down</Rv>
     </main>
@@ -396,7 +905,14 @@ const ph10 = (v) => v.replace(/\D/g, "").slice(-10);
 
 // Duplicate checks only see registrations made in THIS browser (localStorage).
 // For real cross-device duplicate prevention you need a backend (see README note).
-const loadRegs = () => { try { return JSON.parse(localStorage.getItem("na2_regs") || "[]"); } catch { return []; } };
+const loadRegs = () => {
+  try {
+    const registrations = JSON.parse(localStorage.getItem("na2_regs") || "[]");
+    return Array.isArray(registrations) ? registrations : [];
+  } catch {
+    return [];
+  }
+};
 const saveReg = (r) => { try { localStorage.setItem("na2_regs", JSON.stringify([...loadRegs(), r])); } catch { /* ignore */ } };
 
 function Field({ game, id, label, value, onChange, error, type = "text", ph = "", req = true }) {
@@ -502,6 +1018,17 @@ function PageShell({ kicker, title, badge, badgeRec = true, children }) {
       </div>
       <a className="back" href="#register">← back to games</a>
     </div>
+  );
+}
+
+function RegistrationClosedPage() {
+  return (
+    <PageShell kicker="// REGISTRATION" title={<h2>Gate <span>closed</span></h2>} badge={["SIGN-UPS", "CLOSED"]} badgeRec={false}>
+      <div className="reg-closed">
+        <b>REGISTRATION IS CLOSED</b>
+        <p>Sign-ups are not being accepted right now. Please check back later.</p>
+      </div>
+    </PageShell>
   );
 }
 
@@ -654,7 +1181,17 @@ function Fc26Page() {
    ===================================================================== */
 const ADMIN_PASS = "nightmare2026"; // ← change this password
 
-function AdminPage() {
+function AdminPage({
+  registrationOpen,
+  setRegistrationOpen,
+  registrationError,
+  bracket,
+  setBracket,
+  bracketError,
+  bgmiLeaderboard,
+  setBgmiLeaderboard,
+  bgmiLeaderboardError,
+}) {
   const [authed, setAuthed] = useState(() => sessionStorage.getItem("na2_admin") === "1");
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
@@ -685,6 +1222,16 @@ function AdminPage() {
     if (!window.confirm("DELETE ALL registrations? This cannot be undone.")) return;
     localStorage.setItem("na2_regs", "[]");
     setRegs([]); setDetail(null);
+  };
+  const generateFc26Bracket = () => {
+    const entrants = regs.filter((registration) => registration.g === "fc26");
+    if (entrants.length === 0) return;
+    if (bracket && !window.confirm("Generate a new bracket? This replaces the current bracket and clears all match results.")) return;
+    setBracket(createBracket(entrants));
+  };
+  const chooseFc26Winner = (roundIndex, matchIndex, winnerId) => {
+    if (!bracket) return;
+    setBracket(advanceBracket(bracket, roundIndex, matchIndex, winnerId));
   };
   const exportCSV = () => {
     const rows = [["ID", "Game", "Name/Team", "Captain/IGN", "Email", "Phone", "Registered at"]];
@@ -807,6 +1354,53 @@ function AdminPage() {
           </div>
         </div>
 
+        <section className="adm-registration">
+          <div>
+            <div className="adm-kicker">// PUBLIC REGISTRATION</div>
+            <h3>Registration is <span>{registrationOpen ? "open" : "closed"}</span></h3>
+            <p>{registrationOpen
+              ? "Players can access and submit the BGMI and FC 26 forms."
+              : "The public page is showing that registration is closed, and the forms are blocked."}</p>
+            {registrationError && <div className="adm-setting-error" role="alert">{registrationError}</div>}
+          </div>
+          <button
+            className="btn"
+            style={registrationOpen ? { background: "var(--red)" } : { background: "#7dff7d" }}
+            onClick={() => setRegistrationOpen(!registrationOpen)}
+          >
+            {registrationOpen ? "Close registration" : "Open registration"}
+          </button>
+        </section>
+
+        <section className="adm-fc-bracket">
+          <div className="adm-fc-bracket-header">
+            <div>
+              <div className="adm-kicker">// FC 26 · KNOCKOUT TOURNAMENT</div>
+              <h3>FIFA bracket</h3>
+              <p>Generate a single-elimination bracket from registered FC 26 players, then select each match winner to advance them.</p>
+            </div>
+            <button className="btn" onClick={generateFc26Bracket} disabled={fc26Count === 0}>
+              {bracket ? "Regenerate bracket" : "Generate bracket"}
+            </button>
+          </div>
+          {bracketError && <div className="adm-setting-error" role="alert">{bracketError}</div>}
+          {fc26Count === 0
+            ? <div className="adm-empty">Register FC 26 players before generating the bracket.</div>
+            : bracket
+              ? <>
+                <p className="adm-bracket-entrants">{bracket.entrants.length} players in this bracket. New registrations are not added automatically. Changing a winner resets affected later results.</p>
+                <BracketBoard bracket={bracket} onWinner={chooseFc26Winner} />
+              </>
+              : <p className="adm-bracket-entrants">No bracket yet. Generate one when you are ready.</p>}
+        </section>
+
+        <BgmiLeaderboardAdmin
+          teams={regs.filter((registration) => registration.g === "bgmi")}
+          leaderboard={bgmiLeaderboard}
+          saveLeaderboard={setBgmiLeaderboard}
+          error={bgmiLeaderboardError}
+        />
+
         {/* Filters + search */}
         <div className="adm-toolbar">
           <div className="adm-tabs">
@@ -870,6 +1464,9 @@ function AdminPage() {
    ===================================================================== */
 export default function App() {
   const hash = useHash();
+  const registrationStatus = useRegistrationStatus();
+  const fc26Bracket = useFc26Bracket();
+  const bgmiLeaderboard = useBgmiLeaderboard();
   const route = (hash.match(/^#\/(bgmi|fc26|admin)$/) || [])[1];
 
   useEffect(() => {
@@ -880,12 +1477,33 @@ export default function App() {
     }
   }, [route, hash]);
 
-  if (route === "admin") return <><Spores /><RedFlash /><Hud /><Nav /><AdminPage /></>;
+  if (route === "admin") return <><Spores /><RedFlash /><Hud /><Nav /><AdminPage
+    registrationOpen={registrationStatus.open}
+    setRegistrationOpen={registrationStatus.setOpen}
+    registrationError={registrationStatus.error}
+    bracket={fc26Bracket.bracket}
+    setBracket={fc26Bracket.saveBracket}
+    bracketError={fc26Bracket.error}
+    bgmiLeaderboard={bgmiLeaderboard.leaderboard}
+    setBgmiLeaderboard={bgmiLeaderboard.saveLeaderboard}
+    bgmiLeaderboardError={bgmiLeaderboard.error}
+  /></>;
 
   return (
     <>
       <Spores /><RedFlash /><Hud /><Nav />
-      {route === "bgmi" ? <BgmiPage /> : route === "fc26" ? <Fc26Page /> : <><Home /><Footer /></>}
+      {route === "bgmi"
+        ? registrationStatus.open ? <BgmiPage /> : <RegistrationClosedPage />
+        : route === "fc26"
+          ? registrationStatus.open ? <Fc26Page /> : <RegistrationClosedPage />
+          : <><Home
+            registrationOpen={registrationStatus.open}
+            bracket={fc26Bracket.bracket}
+            bracketError={fc26Bracket.error}
+            bgmiTeams={loadRegs().filter((registration) => registration.g === "bgmi")}
+            bgmiLeaderboard={bgmiLeaderboard.leaderboard}
+            bgmiLeaderboardError={bgmiLeaderboard.error}
+          /><Footer /></>}
     </>
   );
 }
