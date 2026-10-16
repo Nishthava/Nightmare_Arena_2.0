@@ -31,7 +31,12 @@ const WALL_ROWS = ["ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ"];
 const WALL_MSGS = ["RUN", "BGMI VS FIFA", "SEE YOU 30 OCT", "JOIN THE PARTY"];
 const REGISTRATION_OPEN_KEY = "na2_registration_open";
 const FC26_BRACKET_KEY = "na2_fc26_bracket";
+const FC26_BRACKET_PUBLISHED_KEY = "na2_fc26_bracket_published";
 const BGMI_LEADERBOARD_KEY = "na2_bgmi_leaderboard";
+const DEMO_MODE_KEY = "na2_demo_mode";
+const DEMO_FC26_BRACKET_KEY = "na2_demo_fc26_bracket";
+const DEMO_FC26_BRACKET_PUBLISHED_KEY = "na2_demo_fc26_bracket_published";
+const DEMO_BGMI_LEADERBOARD_KEY = "na2_demo_bgmi_leaderboard";
 const DEFAULT_PLACEMENT_POINTS = [10, 6, 5, 4, 3, 2, 1, 1];
 const SCRAWLS = [
   ["RUN", "12%", "62%", -6],
@@ -60,6 +65,32 @@ const BRIEF = [
   ["FORMAT", "BGMI in squads of four. FIFA is solo, 1v1 knockout."],
   ["WHAT TO BRING", "Your own device for BGMI. FIFA consoles will be provided."],
   ["ENTRY + PRIZES", "To be announced soon. Watch this space."],
+];
+
+const DEMO_REGISTRATIONS = [
+  ...[
+    ["DEMO-FC26-01", "DEMO · Alex Morgan", "Phantom"],
+    ["DEMO-FC26-02", "DEMO · Jamie Lee", "Night Owl"],
+    ["DEMO-FC26-03", "DEMO · Riley Chen", "R1OT"],
+    ["DEMO-FC26-04", "DEMO · Sam Patel", "Shadow"],
+    ["DEMO-FC26-05", "DEMO · Taylor Kim", "T-K"],
+    ["DEMO-FC26-06", "DEMO · Jordan Singh", "Ghost"],
+    ["DEMO-FC26-07", "DEMO · Casey Rao", "C-Rex"],
+    ["DEMO-FC26-08", "DEMO · Morgan Das", "M0"],
+  ].map(([id, name, ign], index) => ({
+    id, g: "fc26", name, ign, mail: `demo-fc${index + 1}@example.com`,
+    ph: `98765432${String(index).padStart(2, "0")}`, fmt: "solo", mates: [], t: new Date().toISOString(),
+  })),
+  ...[
+    ["DEMO-BGMI-01", "DEMO · Phantom Squad"],
+    ["DEMO-BGMI-02", "DEMO · Night Raiders"],
+    ["DEMO-BGMI-03", "DEMO · Shadow Strike"],
+    ["DEMO-BGMI-04", "DEMO · Ghost Protocol"],
+  ].map(([id, team], index) => ({
+    id, g: "bgmi", team, cap: `Demo Captain ${index + 1}`,
+    mail: `demo-bgmi${index + 1}@example.com`, ph: `98765000${String(index).padStart(2, "0")}`,
+    pl: [], t: new Date().toISOString(),
+  })),
 ];
 
 /* =====================================================================
@@ -188,9 +219,9 @@ function roundName(index, totalRounds) {
   return `Round ${index + 1}`;
 }
 
-function readBracket() {
+function readBracket(demoMode = false) {
   try {
-    const raw = localStorage.getItem(FC26_BRACKET_KEY);
+    const raw = localStorage.getItem(demoMode ? DEMO_FC26_BRACKET_KEY : FC26_BRACKET_KEY);
     if (!raw) return { bracket: null, error: "" };
     const bracket = JSON.parse(raw);
     const validEntrants = Array.isArray(bracket.entrants)
@@ -215,28 +246,55 @@ function readBracket() {
   }
 }
 
-function useFc26Bracket() {
-  const [state, setState] = useState(readBracket);
+function readBracketPublished(demoMode = false) {
+  try {
+    return localStorage.getItem(demoMode ? DEMO_FC26_BRACKET_PUBLISHED_KEY : FC26_BRACKET_PUBLISHED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function useFc26Bracket(demoMode) {
+  const [state, setState] = useState(() => ({
+    ...readBracket(demoMode),
+    published: readBracketPublished(demoMode),
+  }));
 
   useEffect(() => {
+    setState({ ...readBracket(demoMode), published: readBracketPublished(demoMode) });
     const sync = (event) => {
-      if (event.key === FC26_BRACKET_KEY || event.key === null) setState(readBracket());
+      const bracketKey = demoMode ? DEMO_FC26_BRACKET_KEY : FC26_BRACKET_KEY;
+      const publishedKey = demoMode ? DEMO_FC26_BRACKET_PUBLISHED_KEY : FC26_BRACKET_PUBLISHED_KEY;
+      if (event.key === bracketKey || event.key === publishedKey || event.key === null) {
+        setState({ ...readBracket(demoMode), published: readBracketPublished(demoMode) });
+      }
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
-  }, []);
+  }, [demoMode]);
 
   const saveBracket = (bracket) => {
     try {
-      if (bracket) localStorage.setItem(FC26_BRACKET_KEY, JSON.stringify(bracket));
-      else localStorage.removeItem(FC26_BRACKET_KEY);
-      setState({ bracket, error: "" });
+      const key = demoMode ? DEMO_FC26_BRACKET_KEY : FC26_BRACKET_KEY;
+      if (bracket) localStorage.setItem(key, JSON.stringify(bracket));
+      else localStorage.removeItem(key);
+      setState((current) => ({ ...current, bracket, error: "" }));
     } catch {
       setState((current) => ({ ...current, error: "Could not save the FC 26 bracket. Check this browser's storage settings." }));
     }
   };
 
-  return { ...state, saveBracket };
+  const setPublished = (published) => {
+    try {
+      const key = demoMode ? DEMO_FC26_BRACKET_PUBLISHED_KEY : FC26_BRACKET_PUBLISHED_KEY;
+      localStorage.setItem(key, String(published));
+      setState((current) => ({ ...current, published, error: "" }));
+    } catch {
+      setState((current) => ({ ...current, error: "Could not update bracket visibility. Check this browser's storage settings." }));
+    }
+  };
+
+  return { ...state, saveBracket, setPublished };
 }
 
 function advanceBracket(bracket, roundIndex, matchIndex, winnerId) {
@@ -262,6 +320,15 @@ function advanceBracket(bracket, roundIndex, matchIndex, winnerId) {
     });
   }
   return { ...bracket, rounds };
+}
+
+function createDemoBracket() {
+  let bracket = createBracket(DEMO_REGISTRATIONS);
+  ["DEMO-FC26-01", "DEMO-FC26-04", "DEMO-FC26-02", "DEMO-FC26-03"]
+    .forEach((winnerId, matchIndex) => { bracket = advanceBracket(bracket, 0, matchIndex, winnerId); });
+  bracket = advanceBracket(bracket, 1, 0, "DEMO-FC26-01");
+  bracket = advanceBracket(bracket, 1, 1, "DEMO-FC26-03");
+  return bracket;
 }
 
 function defaultBgmiLeaderboard() {
@@ -290,9 +357,9 @@ function isValidBgmiLeaderboard(value) {
         && (score.kills === null || (Number.isInteger(score.kills) && score.kills >= 0))));
 }
 
-function readBgmiLeaderboard() {
+function readBgmiLeaderboard(demoMode = false) {
   try {
-    const raw = localStorage.getItem(BGMI_LEADERBOARD_KEY);
+    const raw = localStorage.getItem(demoMode ? DEMO_BGMI_LEADERBOARD_KEY : BGMI_LEADERBOARD_KEY);
     if (!raw) return { leaderboard: defaultBgmiLeaderboard(), error: "" };
     const leaderboard = JSON.parse(raw);
     if (!isValidBgmiLeaderboard(leaderboard)) {
@@ -304,20 +371,23 @@ function readBgmiLeaderboard() {
   }
 }
 
-function useBgmiLeaderboard() {
-  const [state, setState] = useState(readBgmiLeaderboard);
+function useBgmiLeaderboard(demoMode) {
+  const [state, setState] = useState(() => readBgmiLeaderboard(demoMode));
 
   useEffect(() => {
+    setState(readBgmiLeaderboard(demoMode));
     const sync = (event) => {
-      if (event.key === BGMI_LEADERBOARD_KEY || event.key === null) setState(readBgmiLeaderboard());
+      const key = demoMode ? DEMO_BGMI_LEADERBOARD_KEY : BGMI_LEADERBOARD_KEY;
+      if (event.key === key || event.key === null) setState(readBgmiLeaderboard(demoMode));
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
-  }, []);
+  }, [demoMode]);
 
   const saveLeaderboard = (leaderboard) => {
     try {
-      localStorage.setItem(BGMI_LEADERBOARD_KEY, JSON.stringify(leaderboard));
+      const key = demoMode ? DEMO_BGMI_LEADERBOARD_KEY : BGMI_LEADERBOARD_KEY;
+      localStorage.setItem(key, JSON.stringify(leaderboard));
       setState({ leaderboard, error: "" });
     } catch {
       setState((current) => ({ ...current, error: "Could not save the BGMI leaderboard. Check this browser's storage settings." }));
@@ -360,19 +430,95 @@ function getBgmiStandings(teams, leaderboard) {
     || a.team.localeCompare(b.team));
 }
 
+function createDemoBgmiLeaderboard() {
+    const placements = [
+      [1, 2, 3, 4],
+      [3, 1, 4, 2],
+      [2, 3, 1, 4],
+    ];
+    const kills = [
+      [7, 4, 2, 1],
+      [3, 6, 2, 5],
+      [5, 3, 8, 2],
+    ];
+    const teams = DEMO_REGISTRATIONS.filter((registration) => registration.g === "bgmi");
+
+    return {
+      ...defaultBgmiLeaderboard(),
+      matches: placements.map((matchPlacements, matchIndex) => ({
+        id: `demo-bgmi-match-${matchIndex + 1}`,
+        name: `Demo Match ${matchIndex + 1}`,
+        scores: Object.fromEntries(teams.map((team, teamIndex) => [
+          team.id,
+          { placement: matchPlacements[teamIndex], kills: kills[matchIndex][teamIndex] },
+        ])),
+      })),
+    };
+}
+
+function seedDemoData() {
+    if (localStorage.getItem(DEMO_FC26_BRACKET_KEY) === null) {
+      localStorage.setItem(DEMO_FC26_BRACKET_KEY, JSON.stringify(createDemoBracket()));
+    }
+    if (localStorage.getItem(DEMO_FC26_BRACKET_PUBLISHED_KEY) === null) {
+      localStorage.setItem(DEMO_FC26_BRACKET_PUBLISHED_KEY, "true");
+    }
+    if (localStorage.getItem(DEMO_BGMI_LEADERBOARD_KEY) === null) {
+      localStorage.setItem(DEMO_BGMI_LEADERBOARD_KEY, JSON.stringify(createDemoBgmiLeaderboard()));
+    }
+}
+
+function useDemoMode() {
+    const [state, setState] = useState(() => {
+      try {
+        return { enabled: localStorage.getItem(DEMO_MODE_KEY) === "true", error: "" };
+      } catch {
+        return { enabled: false, error: "Could not read demo mode from this browser." };
+      }
+    });
+
+    useEffect(() => {
+      const sync = (event) => {
+        if (event.key === DEMO_MODE_KEY || event.key === null) {
+          setState({ enabled: event.newValue === "true", error: "" });
+        }
+      };
+      window.addEventListener("storage", sync);
+      return () => window.removeEventListener("storage", sync);
+    }, []);
+
+    const setEnabled = (enabled) => {
+      try {
+        if (enabled) seedDemoData();
+        localStorage.setItem(DEMO_MODE_KEY, String(enabled));
+        setState({ enabled, error: "" });
+      } catch {
+        setState((current) => ({
+          ...current,
+          error: "Could not start demo mode. Check this browser's storage settings.",
+        }));
+      }
+    };
+
+    return { ...state, setEnabled };
+}
+
 /* =====================================================================
-   Global overlays: spores, red flash, VHS HUD
+     Global overlays: spores, red flash, VHS HUD
    ===================================================================== */
 function Spores() {
   const ref = useRef(null);
   useEffect(() => {
     const cv = ref.current, cc = cv.getContext("2d");
-    let W, H, raf;
+    let W, H, raf, lastFrame = 0;
     const resize = () => { W = cv.width = innerWidth; H = cv.height = innerHeight; };
     resize();
     window.addEventListener("resize", resize);
-    const P = Array.from({ length: 80 }, (_, i) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 2 + 0.5, s: Math.random() * 0.4 + 0.1, a: Math.random(), red: i % 9 === 0 }));
-    const draw = () => {
+    const P = Array.from({ length: 36 }, (_, i) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 2 + 0.5, s: Math.random() * 0.4 + 0.1, a: Math.random(), red: i % 9 === 0 }));
+    const draw = (now) => {
+      if (document.hidden) { raf = 0; return; }
+      if (now - lastFrame < 33) { raf = requestAnimationFrame(draw); return; }
+      lastFrame = now;
       cc.clearRect(0, 0, W, H);
       for (const p of P) {
         p.y += p.s; p.x += Math.sin(p.y / 50 + p.a * 6) * 0.35;
@@ -383,8 +529,20 @@ function Spores() {
       }
       raf = requestAnimationFrame(draw);
     };
-    draw();
-    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+    const syncVisibility = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      else if (!raf) raf = requestAnimationFrame(draw);
+    };
+    document.addEventListener("visibilitychange", syncVisibility);
+    raf = requestAnimationFrame(draw);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("visibilitychange", syncVisibility);
+      window.removeEventListener("resize", resize);
+    };
   }, []);
   return <canvas id="sp" ref={ref} />;
 }
@@ -423,7 +581,7 @@ function Nav() {
     <nav>
       <b>NIGHTMARE ARENA 2.0</b>
       <div>
-        <a href="#wall">The Wall</a><a href="#games">Games</a><a href="#tapes">Schedule</a>
+        <a href="#wall">The Wall</a><a href="#games">Games</a><a className="nav-results" href="#results">Results</a><a href="#tapes">Schedule</a>
         <a className="cta" href="#register">Join</a>
         <a href="#/admin" style={{ fontSize: ".75rem", color: "var(--dim)", marginLeft: 14 }}>Admin</a>
       </div>
@@ -453,25 +611,21 @@ function Hero() {
 
   useEffect(() => {
     const h = ref.current;
-    let tx = innerWidth / 2, ty = 300, cx = tx, cy = ty, last = 0, raf;
-    const t0 = performance.now();
-    const move = (e) => { const r = h.getBoundingClientRect(); tx = e.clientX - r.left; ty = e.clientY - r.top; last = performance.now(); };
-    h.addEventListener("pointermove", move);
-    const loop = (now) => {
+    const move = (e) => {
       const r = h.getBoundingClientRect();
-      if (now - last > 2500) { // no pointer: let the light wander (phones)
-        tx = r.width * (0.5 + 0.38 * Math.sin((now - t0) / 2300));
-        ty = r.height * (0.5 + 0.34 * Math.sin((now - t0) / 1700 + 1));
-      }
-      cx += (tx - cx) * 0.12; cy += (ty - cy) * 0.12;
-      const rad = (innerWidth < 720 ? 180 : 260) * (Math.random() < 0.015 ? 0.75 : 1);
-      h.style.setProperty("--x", cx + "px");
-      h.style.setProperty("--y", cy + "px");
-      h.style.setProperty("--r", rad + "px");
-      raf = requestAnimationFrame(loop);
+      h.style.setProperty("--x", `${e.clientX - r.left}px`);
+      h.style.setProperty("--y", `${e.clientY - r.top}px`);
     };
-    raf = requestAnimationFrame(loop);
-    return () => { cancelAnimationFrame(raf); h.removeEventListener("pointermove", move); };
+    const reset = () => {
+      h.style.setProperty("--x", "50%");
+      h.style.setProperty("--y", "50%");
+    };
+    h.addEventListener("pointermove", move);
+    h.addEventListener("pointerleave", reset);
+    return () => {
+      h.removeEventListener("pointermove", move);
+      h.removeEventListener("pointerleave", reset);
+    };
   }, []);
 
   return (
@@ -637,16 +791,16 @@ function BracketBoard({ bracket, onWinner }) {
   );
 }
 
-function PublicBracket({ bracket, error }) {
-  if (!bracket && !error) return null;
+function PublicBracket({ bracket, published, error }) {
+  if (!published || (!bracket && !error)) return null;
   return (
-    <section id="fc26-bracket">
+    <div className="public-tournament-panel" id="fc26-bracket">
       <Rv className="k2">// FC 26 · KNOCKOUT</Rv>
       <Rv as="h2">Tournament <span>bracket</span></Rv>
       {error
         ? <div className="reg-closed" role="alert">{error}</div>
         : <Rv><BracketBoard bracket={bracket} /></Rv>}
-    </section>
+    </div>
   );
 }
 
@@ -654,7 +808,7 @@ function PublicBgmiLeaderboard({ teams, leaderboard, error }) {
   if (leaderboard.matches.length === 0 && !error) return null;
   const standings = getBgmiStandings(teams, leaderboard);
   return (
-    <section id="bgmi-leaderboard">
+    <div className="public-tournament-panel" id="bgmi-leaderboard">
       <Rv className="k2">// BGMI · LIVE STANDINGS</Rv>
       <Rv as="h2">Battle <span>leaderboard</span></Rv>
       {error ? <div className="reg-closed" role="alert">{error}</div> : (
@@ -686,7 +840,7 @@ function PublicBgmiLeaderboard({ teams, leaderboard, error }) {
           )}
         </Rv>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -821,9 +975,11 @@ function BgmiLeaderboardAdmin({ teams, leaderboard, saveLeaderboard, error }) {
   );
 }
 
-function Home({ registrationOpen, bracket, bracketError, bgmiTeams, bgmiLeaderboard, bgmiLeaderboardError }) {
+function Home({ registrationOpen, bracket, bracketPublished, bracketError, bgmiTeams, bgmiLeaderboard, bgmiLeaderboardError, demoMode }) {
+  const [openResult, setOpenResult] = useState("");
   return (
     <main>
+      {demoMode && <div className="public-demo-banner">DEMO PREVIEW · Sample tournament data shown only in this browser</div>}
       <Hero />
       <Rv className="strip">
         <div><b>2</b><span>GAMES</span></div><div><b>2</b><span>NIGHTS</span></div>
@@ -831,6 +987,43 @@ function Home({ registrationOpen, bracket, bracketError, bgmiTeams, bgmiLeaderbo
       </Rv>
       <Wall />
       <GameSelect />
+
+      <section id="results">
+        <Rv className="k2">// TOURNAMENT HQ</Rv>
+        <Rv as="h2">Check the <span>results</span></Rv>
+        <Rv className="result-buttons" role="group" aria-label="Tournament results">
+          <button
+            className={`result-button${openResult === "fc26" ? " active" : ""}`}
+            type="button"
+            aria-expanded={openResult === "fc26"}
+            aria-controls="fc26-result-panel"
+            onClick={() => setOpenResult((current) => current === "fc26" ? "" : "fc26")}
+          >
+            <span>FC 26</span>
+            <b>{openResult === "fc26" ? "Hide bracket −" : "View knockout bracket →"}</b>
+          </button>
+          <button
+            className={`result-button${openResult === "bgmi" ? " active" : ""}`}
+            type="button"
+            aria-expanded={openResult === "bgmi"}
+            aria-controls="bgmi-result-panel"
+            onClick={() => setOpenResult((current) => current === "bgmi" ? "" : "bgmi")}
+          >
+            <span>BGMI</span>
+            <b>{openResult === "bgmi" ? "Hide leaderboard −" : "View leaderboard →"}</b>
+          </button>
+        </Rv>
+        <div id="fc26-result-panel" className="result-panel" hidden={openResult !== "fc26"}>
+          {openResult === "fc26" && (bracketPublished
+            ? <PublicBracket bracket={bracket} published={bracketPublished} error={bracketError} />
+            : <p className="result-empty">The FC 26 bracket will appear here once the organisers publish it.</p>)}
+        </div>
+        <div id="bgmi-result-panel" className="result-panel" hidden={openResult !== "bgmi"}>
+          {openResult === "bgmi" && (bgmiLeaderboard.matches.length > 0 || bgmiLeaderboardError
+            ? <PublicBgmiLeaderboard teams={bgmiTeams} leaderboard={bgmiLeaderboard} error={bgmiLeaderboardError} />
+            : <p className="result-empty">The BGMI leaderboard will appear here after the first match is recorded.</p>)}
+        </div>
+      </section>
 
       <section id="tapes">
         <Rv className="k2">// RECOVERED TAPES</Rv>
@@ -875,9 +1068,6 @@ function Home({ registrationOpen, bracket, bracketError, bgmiTeams, bgmiLeaderbo
           </Rv>
         )}
       </section>
-
-      <PublicBracket bracket={bracket} error={bracketError} />
-      <PublicBgmiLeaderboard teams={bgmiTeams} leaderboard={bgmiLeaderboard} error={bgmiLeaderboardError} />
 
       <Rv className="big">See you in the upside down</Rv>
     </main>
@@ -1021,12 +1211,19 @@ function PageShell({ kicker, title, badge, badgeRec = true, children }) {
   );
 }
 
-function RegistrationClosedPage() {
+function RegistrationClosedPage({ demoMode = false }) {
   return (
-    <PageShell kicker="// REGISTRATION" title={<h2>Gate <span>closed</span></h2>} badge={["SIGN-UPS", "CLOSED"]} badgeRec={false}>
+    <PageShell
+      kicker={demoMode ? "// DEMO PREVIEW" : "// REGISTRATION"}
+      title={<h2>Gate <span>{demoMode ? "preview" : "closed"}</span></h2>}
+      badge={["SIGN-UPS", demoMode ? "DEMO MODE" : "CLOSED"]}
+      badgeRec={false}
+    >
       <div className="reg-closed">
-        <b>REGISTRATION IS CLOSED</b>
-        <p>Sign-ups are not being accepted right now. Please check back later.</p>
+        <b>{demoMode ? "DEMO PREVIEW IS ACTIVE" : "REGISTRATION IS CLOSED"}</b>
+        <p>{demoMode
+          ? "Registration forms are disabled while the admin previews sample bracket and leaderboard data."
+          : "Sign-ups are not being accepted right now. Please check back later."}</p>
       </div>
     </PageShell>
   );
@@ -1187,23 +1384,28 @@ function AdminPage({
   registrationError,
   bracket,
   setBracket,
+  bracketPublished,
+  setBracketPublished,
   bracketError,
   bgmiLeaderboard,
   setBgmiLeaderboard,
   bgmiLeaderboardError,
+  demoMode,
+  setDemoMode,
+  demoModeError,
 }) {
   const [authed, setAuthed] = useState(() => sessionStorage.getItem("na2_admin") === "1");
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
   const [regs, setRegs] = useState([]);
-  const [filter, setFilter] = useState("all");   // "all" | "bgmi" | "fc26"
+  const [activeSection, setActiveSection] = useState("overview"); // "overview" | "bgmi" | "fc26"
   const [search, setSearch] = useState("");
   const [detail, setDetail] = useState(null);    // registration object to show
 
   // load regs whenever authed changes
   useEffect(() => {
-    if (authed) setRegs(loadRegs());
-  }, [authed]);
+    if (authed) setRegs(demoMode ? DEMO_REGISTRATIONS : loadRegs());
+  }, [authed, demoMode]);
 
   const login = (e) => {
     e.preventDefault();
@@ -1212,6 +1414,7 @@ function AdminPage({
   };
   const logout = () => { sessionStorage.removeItem("na2_admin"); setAuthed(false); setRegs([]); };
   const deleteReg = (id) => {
+    if (demoMode) return;
     if (!window.confirm("Delete registration " + id + "?")) return;
     const next = regs.filter((r) => r.id !== id);
     localStorage.setItem("na2_regs", JSON.stringify(next));
@@ -1219,6 +1422,7 @@ function AdminPage({
     if (detail?.id === id) setDetail(null);
   };
   const clearAll = () => {
+    if (demoMode) return;
     if (!window.confirm("DELETE ALL registrations? This cannot be undone.")) return;
     localStorage.setItem("na2_regs", "[]");
     setRegs([]); setDetail(null);
@@ -1228,6 +1432,7 @@ function AdminPage({
     if (entrants.length === 0) return;
     if (bracket && !window.confirm("Generate a new bracket? This replaces the current bracket and clears all match results.")) return;
     setBracket(createBracket(entrants));
+    setBracketPublished(false);
   };
   const chooseFc26Winner = (roundIndex, matchIndex, winnerId) => {
     if (!bracket) return;
@@ -1247,7 +1452,7 @@ function AdminPage({
   };
 
   const visible = regs.filter((r) => {
-    if (filter !== "all" && r.g !== filter) return false;
+    if (activeSection !== "overview" && r.g !== activeSection) return false;
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     const haystack = (r.g === "bgmi")
@@ -1307,7 +1512,7 @@ function AdminPage({
           </table>
           <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
             <button className="btn alt" style={{ flex: 1 }} onClick={onClose}>Close</button>
-            <button className="btn" style={{ flex: 1, background: "var(--red)" }} onClick={() => { deleteReg(r.id); onClose(); }}>Delete ✕</button>
+            {!demoMode && <button className="btn" style={{ flex: 1, background: "var(--red)" }} onClick={() => { deleteReg(r.id); onClose(); }}>Delete ✕</button>}
           </div>
         </div>
       </div>
@@ -1328,11 +1533,42 @@ function AdminPage({
             </h2>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <button className={`btn ${demoMode ? "" : "alt"}`} onClick={() => setDemoMode(!demoMode)}>
+              {demoMode ? "Exit demo data" : "Preview with demo data"}
+            </button>
             <button className="btn alt" onClick={exportCSV}>Export CSV</button>
-            <button className="btn alt" style={{ borderColor: "var(--red)", color: "var(--red)" }} onClick={clearAll}>Clear All</button>
+            {!demoMode && <button className="btn alt" style={{ borderColor: "var(--red)", color: "var(--red)" }} onClick={clearAll}>Clear All</button>}
             <button className="btn" onClick={logout}>Logout</button>
           </div>
         </div>
+
+        {demoMode && (
+          <div className="adm-demo-banner">
+            <b>DEMO DATA MODE</b>
+            <span>Sample registrations, bracket, and match scores are isolated from real data. The public page in this browser is previewing the demo.</span>
+          </div>
+        )}
+        {demoModeError && <div className="adm-setting-error" role="alert">{demoModeError}</div>}
+
+        <nav className="adm-game-nav" aria-label="Admin sections">
+          {[
+            { id: "overview", label: "Overview", count: regs.length, color: "var(--amber)" },
+            { id: "bgmi", label: "BGMI", count: bgmiCount, color: "#4db3ff" },
+            { id: "fc26", label: "FC 26", count: fc26Count, color: "var(--red)" },
+          ].map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={"adm-game-tab" + (activeSection === section.id ? " active" : "")}
+              style={{ "--game-color": section.color }}
+              aria-pressed={activeSection === section.id}
+              onClick={() => setActiveSection(section.id)}
+            >
+              <span>{section.label}</span>
+              <b>{section.count}</b>
+            </button>
+          ))}
+        </nav>
 
         {/* Stats */}
         <div className="adm-stats">
@@ -1354,7 +1590,7 @@ function AdminPage({
           </div>
         </div>
 
-        <section className="adm-registration">
+        {activeSection === "overview" && <section className="adm-registration">
           <div>
             <div className="adm-kicker">// PUBLIC REGISTRATION</div>
             <h3>Registration is <span>{registrationOpen ? "open" : "closed"}</span></h3>
@@ -1367,12 +1603,13 @@ function AdminPage({
             className="btn"
             style={registrationOpen ? { background: "var(--red)" } : { background: "#7dff7d" }}
             onClick={() => setRegistrationOpen(!registrationOpen)}
+            disabled={demoMode}
           >
-            {registrationOpen ? "Close registration" : "Open registration"}
+            {demoMode ? "Unavailable in demo mode" : registrationOpen ? "Close registration" : "Open registration"}
           </button>
-        </section>
+        </section>}
 
-        <section className="adm-fc-bracket">
+        {activeSection === "fc26" && <section className="adm-fc-bracket">
           <div className="adm-fc-bracket-header">
             <div>
               <div className="adm-kicker">// FC 26 · KNOCKOUT TOURNAMENT</div>
@@ -1388,38 +1625,48 @@ function AdminPage({
             ? <div className="adm-empty">Register FC 26 players before generating the bracket.</div>
             : bracket
               ? <>
-                <p className="adm-bracket-entrants">{bracket.entrants.length} players in this bracket. New registrations are not added automatically. Changing a winner resets affected later results.</p>
+                <div className="adm-bracket-publish">
+                  <p className="adm-bracket-entrants">
+                    {bracket.entrants.length} players in this bracket. New registrations are not added automatically. Changing a winner resets affected later results.
+                    <strong className={bracketPublished ? "published" : ""}>
+                      {bracketPublished ? " · Visible on frontend" : " · Hidden from frontend"}
+                    </strong>
+                  </p>
+                  <button className={`btn ${bracketPublished ? "alt" : ""}`} onClick={() => setBracketPublished(!bracketPublished)}>
+                    {bracketPublished ? "Hide from frontend" : "Publish bracket"}
+                  </button>
+                </div>
                 <BracketBoard bracket={bracket} onWinner={chooseFc26Winner} />
               </>
               : <p className="adm-bracket-entrants">No bracket yet. Generate one when you are ready.</p>}
-        </section>
+        </section>}
 
-        <BgmiLeaderboardAdmin
+        {activeSection === "bgmi" && <BgmiLeaderboardAdmin
           teams={regs.filter((registration) => registration.g === "bgmi")}
           leaderboard={bgmiLeaderboard}
           saveLeaderboard={setBgmiLeaderboard}
           error={bgmiLeaderboardError}
-        />
+        />}
 
         {/* Filters + search */}
         <div className="adm-toolbar">
-          <div className="adm-tabs">
-            {["all", "bgmi", "fc26"].map((t) => (
-              <button key={t} className={"adm-tab" + (filter === t ? " active" : "")} onClick={() => setFilter(t)}>
-                {t === "all" ? "ALL" : t === "bgmi" ? "BGMI" : "FC 26"}
-              </button>
-            ))}
-          </div>
           <input
             className="adm-search"
             type="search"
-            placeholder="Search by name, email, phone…"
+            placeholder={`Search ${activeSection === "overview" ? "all registrations" : activeSection === "bgmi" ? "BGMI teams" : "FC 26 players"}…`}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
         {/* Registration list */}
+        <div className="adm-registration-list-heading">
+          <div>
+            <div className="adm-kicker">// {activeSection === "overview" ? "ALL GAMES" : activeSection === "bgmi" ? "BGMI" : "FC 26"} · REGISTRATIONS</div>
+            <h3>{activeSection === "overview" ? "All registrations" : activeSection === "bgmi" ? "BGMI teams" : "FC 26 players"}</h3>
+          </div>
+          <span>{visible.length} {visible.length === 1 ? "entry" : "entries"}</span>
+        </div>
         {visible.length === 0 ? (
           <div className="adm-empty">
             {regs.length === 0 ? "No registrations yet." : "No results match your filter."}
@@ -1447,7 +1694,7 @@ function AdminPage({
                   <div className="adm-row-time">
                     {new Date(r.t).toLocaleDateString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
                   </div>
-                  <button className="adm-del" title="Delete" onClick={(e) => { e.stopPropagation(); deleteReg(r.id); }}>✕</button>
+                  {!demoMode && <button className="adm-del" title="Delete" onClick={(e) => { e.stopPropagation(); deleteReg(r.id); }}>✕</button>}
                 </div>
               );
             })}
@@ -1465,8 +1712,9 @@ function AdminPage({
 export default function App() {
   const hash = useHash();
   const registrationStatus = useRegistrationStatus();
-  const fc26Bracket = useFc26Bracket();
-  const bgmiLeaderboard = useBgmiLeaderboard();
+  const demoMode = useDemoMode();
+  const fc26Bracket = useFc26Bracket(demoMode.enabled);
+  const bgmiLeaderboard = useBgmiLeaderboard(demoMode.enabled);
   const route = (hash.match(/^#\/(bgmi|fc26|admin)$/) || [])[1];
 
   useEffect(() => {
@@ -1483,26 +1731,35 @@ export default function App() {
     registrationError={registrationStatus.error}
     bracket={fc26Bracket.bracket}
     setBracket={fc26Bracket.saveBracket}
+    bracketPublished={fc26Bracket.published}
+    setBracketPublished={fc26Bracket.setPublished}
     bracketError={fc26Bracket.error}
     bgmiLeaderboard={bgmiLeaderboard.leaderboard}
     setBgmiLeaderboard={bgmiLeaderboard.saveLeaderboard}
     bgmiLeaderboardError={bgmiLeaderboard.error}
+    demoMode={demoMode.enabled}
+    setDemoMode={demoMode.setEnabled}
+    demoModeError={demoMode.error}
   /></>;
 
   return (
     <>
       <Spores /><RedFlash /><Hud /><Nav />
       {route === "bgmi"
-        ? registrationStatus.open ? <BgmiPage /> : <RegistrationClosedPage />
+        ? demoMode.enabled ? <RegistrationClosedPage demoMode /> : registrationStatus.open ? <BgmiPage /> : <RegistrationClosedPage />
         : route === "fc26"
-          ? registrationStatus.open ? <Fc26Page /> : <RegistrationClosedPage />
+          ? demoMode.enabled ? <RegistrationClosedPage demoMode /> : registrationStatus.open ? <Fc26Page /> : <RegistrationClosedPage />
           : <><Home
             registrationOpen={registrationStatus.open}
             bracket={fc26Bracket.bracket}
+            bracketPublished={fc26Bracket.published}
             bracketError={fc26Bracket.error}
-            bgmiTeams={loadRegs().filter((registration) => registration.g === "bgmi")}
+            bgmiTeams={demoMode.enabled
+              ? DEMO_REGISTRATIONS.filter((registration) => registration.g === "bgmi")
+              : loadRegs().filter((registration) => registration.g === "bgmi")}
             bgmiLeaderboard={bgmiLeaderboard.leaderboard}
             bgmiLeaderboardError={bgmiLeaderboard.error}
+            demoMode={demoMode.enabled}
           /><Footer /></>}
     </>
   );
