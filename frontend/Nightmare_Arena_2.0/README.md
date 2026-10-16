@@ -7,6 +7,11 @@
     npm install
     npm run dev
 
+For the frontend Supabase client, copy `.env.example` to `.env.local` and set
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`. Only publishable keys
+belong in Vite variables; never place a Supabase secret key in frontend code or
+any `VITE_*` variable. The Node API setup is documented in [`../../backend/README.md`](../../backend/README.md).
+
 Organiser settings are at the top of `src/App.jsx`: event date, WhatsApp number, email, FC 26 format.
 
 Note: duplicate-registration checks use localStorage, so they only see registrations made in the same browser.
