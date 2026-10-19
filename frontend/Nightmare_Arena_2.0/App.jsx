@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { saveRegistration, fetchRegistrations, deleteRegistration, deleteAllRegistrations } from "./supabase";
+import {
+  saveRegistration,
+  fetchRegistrations,
+  deleteRegistration,
+  deleteAllRegistrations,
+  signInAdmin,
+  signOutAdmin,
+} from "./supabase";
 import "./App.css";
 
 /* =====================================================================
@@ -1392,8 +1399,6 @@ function Fc26Page() {
 /* =====================================================================
    Admin panel
    ===================================================================== */
-const ADMIN_PASS = "nightmare2026"; // ← change this password
-
 function AdminPage({
   registrationOpen,
   setRegistrationOpen,
@@ -1410,8 +1415,10 @@ function AdminPage({
   setDemoMode,
   demoModeError,
 }) {
-  const [authed, setAuthed] = useState(() => sessionStorage.getItem("na2_admin") === "1");
+  const [authed, setAuthed] = useState(false);
+  const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
+
   const [err, setErr] = useState("");
   const [regs, setRegs] = useState([]);
   const [activeSection, setActiveSection] = useState("overview"); // "overview" | "bgmi" | "fc26"
@@ -1454,12 +1461,27 @@ function AdminPage({
     loadFromSupabase();
   }, [authed, demoMode]);
 
-  const login = (e) => {
+  const login = async (e) => {
     e.preventDefault();
-    if (pw === ADMIN_PASS) { sessionStorage.setItem("na2_admin", "1"); setAuthed(true); setErr(""); }
-    else { setErr("Wrong password. Try again."); setPw(""); }
+    setErr("");
+
+    try {
+      await signInAdmin(email, pw);
+      setAuthed(true);
+      setPw("");
+    } catch (error) {
+      setErr(error.message || "Login failed. Check your credentials.");
+    }
   };
-  const logout = () => { sessionStorage.removeItem("na2_admin"); setAuthed(false); setRegs([]); };
+  const logout = async () => {
+    try {
+      await signOutAdmin();
+      setAuthed(false);
+      setRegs([]);
+    } catch (error) {
+      setErr(error.message || "Logout failed. Please try again.");
+    }
+  };
   const deleteReg = async (dbId) => {
     if (demoMode) return;
 
@@ -1535,6 +1557,26 @@ function AdminPage({
         <h2 className="ab">Command<br /><span>Center</span></h2>
         <p style={{ color: "var(--dim)", marginBottom: 28 }}>Restricted area. Enter your password to proceed.</p>
         <form onSubmit={login}>
+          <label className="f" htmlFor="adm-email">Email</label>
+<input
+  id="adm-email"
+  type="email"
+  autoComplete="username"
+  required
+  value={email}
+  onChange={(e) => setEmail(e.target.value)}
+  style={{
+    width: "100%",
+    background: "none",
+    border: 0,
+    borderBottom: "2px solid var(--dim)",
+    color: "var(--bone)",
+    fontFamily: "inherit",
+    fontSize: "1.2rem",
+    padding: "6px 0",
+    marginBottom: 16
+  }}
+/>
           <label className="f" htmlFor="adm-pw">Password</label>
           <input id="adm-pw" type="password" autoFocus autoComplete="current-password"
             value={pw} onChange={(e) => setPw(e.target.value)}
