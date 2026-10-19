@@ -1172,16 +1172,6 @@ function useFlow({ game, pre, title, validate, collect, dup, rows }) {
     }
   };
 
-  try {
-    await saveRegistration(x);
-    setD(x);
-    setStage("done");
-  } catch (error) {
-    setBlock(
-      error.message || "Registration failed. Please try again."
-    );
-  }
-};
   const edit = () => { setBlock(""); setStage("form"); };
   const list = d ? rows(d) : [];
   const text = d ? ["THE NIGHTMARE ARENA 2.0 · " + title, ...(d.id ? ["ID: " + d.id] : []), ...list.map(([a, b]) => `${a}: ${b}`)].join("\n") : "";
