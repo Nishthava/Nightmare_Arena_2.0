@@ -1423,10 +1423,28 @@ function AdminPage({
   // load regs from Supabase whenever authed/demoMode changes
   const loadFromSupabase = () => {
     if (!authed || demoMode) return;
-    setLoadingRegs(true); setFetchError("");
+
+    setLoadingRegs(true);
+    setFetchError("");
+
     fetchRegistrations()
-      .then((data) => { setRegs(data); })
-      .catch((e) => { setFetchError("Failed to load registrations: " + e.message); })
+      .then((data) => {
+        const mapped = data.map((row) => ({
+          ...row.data,
+          dbId: row.id,
+          id: row.registration_id,
+          g: row.game,
+          mail: row.email,
+          ph: row.phone,
+          t: row.created_at,
+          team: row.team_name || row.data?.team,
+        }));
+
+        setRegs(mapped);
+      })
+      .catch((e) => {
+        setFetchError("Failed to load registrations: " + e.message);
+      })
       .finally(() => setLoadingRegs(false));
   };
 
@@ -1442,16 +1460,21 @@ function AdminPage({
     else { setErr("Wrong password. Try again."); setPw(""); }
   };
   const logout = () => { sessionStorage.removeItem("na2_admin"); setAuthed(false); setRegs([]); };
-  const deleteReg = async (id) => {
+  const deleteReg = async (dbId) => {
     if (demoMode) return;
-    if (!window.confirm("Delete registration " + id + "?")) return;
+
+    if (!window.confirm("Delete this registration?")) return;
+
     try {
-      await deleteRegistration(id);
-      const next = regs.filter((r) => r.id !== id);
-      // also remove from local cache
-      localStorage.setItem("na2_regs", JSON.stringify(next));
-      setRegs(next);
-      if (detail?.id === id) setDetail(null);
+      await deleteRegistration(dbId);
+
+      setRegs((current) =>
+        current.filter((r) => r.dbId !== dbId)
+      );
+
+      if (detail?.dbId === dbId) {
+        setDetail(null);
+      }
     } catch (e) {
       alert("Delete failed: " + e.message);
     }
@@ -1552,7 +1575,7 @@ function AdminPage({
           </table>
           <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
             <button className="btn alt" style={{ flex: 1 }} onClick={onClose}>Close</button>
-            {!demoMode && <button className="btn" style={{ flex: 1, background: "var(--red)" }} onClick={() => { deleteReg(r.id); onClose(); }}>Delete ✕</button>}
+            {!demoMode && <button className="btn" style={{ flex: 1, background: "var(--red)" }} onClick={() => { deleteReg(r.dbId); onClose(); }}>Delete ✕</button>}
           </div>
         </div>
       </div>

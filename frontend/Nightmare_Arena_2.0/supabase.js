@@ -29,38 +29,33 @@ export async function saveRegistration(registration) {
   return registration;
 }
 
-
-/**
- * Fetch all registrations from Supabase, newest first.
- */
+// Fetch registrations for an authenticated admin
 export async function fetchRegistrations() {
   const { data, error } = await supabase
     .from("registrations")
     .select("*")
-    .order("t", { ascending: false });
-  if (error) throw new Error(error.message);
-  return data ?? [];
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data;
 }
 
-/**
- * Delete a single registration by id.
- */
+// Delete one registration by its database ID
 export async function deleteRegistration(id) {
   const { error } = await supabase
     .from("registrations")
     .delete()
     .eq("id", id);
-  if (error) throw new Error(error.message);
+
+  if (error) throw error;
 }
 
-/**
- * Delete ALL registrations (admin "Clear All").
- */
+// Delete all registrations — call only after admin confirmation
 export async function deleteAllRegistrations() {
-  // Supabase requires a filter for bulk delete; use a truthy condition on id.
   const { error } = await supabase
     .from("registrations")
     .delete()
-    .neq("id", "");
-  if (error) throw new Error(error.message);
+    .not("id", "is", null);
+
+  if (error) throw error;
 }
