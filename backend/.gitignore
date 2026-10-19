@@ -2,3 +2,12 @@ node_modules/
 .env
 .env.*
 !.env.example
+# Frontend environment variables
+/frontend/Nightmare_Arena_2.0/.env
+/frontend/Nightmare_Arena_2.0/.env.*
+!/frontend/Nightmare_Arena_2.0/.env.example
+
+# Backend environment variables
+/backend/.env
+/backend/.env.*
+!/backend/.env.example
