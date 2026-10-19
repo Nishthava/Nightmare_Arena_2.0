@@ -1,36 +1,50 @@
-
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+);
 
-console.log("Supabase URL loaded:", Boolean(supabaseUrl));
-console.log("Supabase key loaded:", Boolean(supabaseKey));
-
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error("Supabase environment variables are missing.");
+/**
+ * Save a registration to Supabase.
+ * The `reg` object must already have `id` and `t` set.
+ */
+export async function saveRegistration(reg) {
+  const { error } = await supabase.from("registrations").insert(reg);
+  if (error) throw new Error(error.message);
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+/**
+ * Fetch all registrations from Supabase, newest first.
+ */
+export async function fetchRegistrations() {
+  const { data, error } = await supabase
+    .from("registrations")
+    .select("*")
+    .order("t", { ascending: false });
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
 
-export async function saveRegistration(registration) {
-  const { error } = await supabase.from("registrations").insert({
-    registration_id: registration.id,
-    game: registration.g,
-    email: registration.mail,
-    phone: registration.ph,
-    team_name: registration.g === "bgmi" ? registration.team : null,
-    data: registration,
-  });
+/**
+ * Delete a single registration by id.
+ */
+export async function deleteRegistration(id) {
+  const { error } = await supabase
+    .from("registrations")
+    .delete()
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
 
-  if (error) {
-    if (error.code === "23505") {
-      throw new Error(
-        "This registration already exists. Check the email, phone, or team name."
-      );
-    }
-    throw new Error(error.message);
-  }
-
-  return registration;
+/**
+ * Delete ALL registrations (admin "Clear All").
+ */
+export async function deleteAllRegistrations() {
+  // Supabase requires a filter for bulk delete; use a truthy condition on id.
+  const { error } = await supabase
+    .from("registrations")
+    .delete()
+    .neq("id", "");
+  if (error) throw new Error(error.message);
 }

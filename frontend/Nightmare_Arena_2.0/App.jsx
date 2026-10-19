@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { saveRegistration } from "./supabase";
+import { saveRegistration, fetchRegistrations, deleteRegistration, deleteAllRegistrations } from "./supabase";
 import "./App.css";
 
 /* =====================================================================
@@ -1141,6 +1141,7 @@ function useFlow({ game, pre, title, validate, collect, dup, rows }) {
   const [dupMsg, setDupMsg] = useState("");
   const [block, setBlock] = useState("");
   const [d, setD] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const submit = (form) => {
     const e = validate(form);
@@ -1156,17 +1157,19 @@ function useFlow({ game, pre, title, validate, collect, dup, rows }) {
     setD(x); setBlock(""); setStage("review");
   };
   const confirm = async () => {
-  const m = dup(d, loadRegs());
-
-  if (m) {
-    setBlock(m);
-    return;
-  }
-
-  const x = {
-    ...d,
-    id: `${pre}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-    t: new Date().toISOString(),
+    const m = dup(d, loadRegs());
+    if (m) { setBlock(m); return; }
+    const x = { ...d, id: `${pre}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`, t: new Date().toISOString() };
+    setSaving(true); setBlock("");
+    try {
+      await saveRegistration(x);
+      saveReg(x); // keep a local cache for duplicate checks
+      setD(x); setStage("done");
+    } catch (err) {
+      setBlock("Could not save your registration: " + err.message + ". Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   try {
@@ -1182,7 +1185,7 @@ function useFlow({ game, pre, title, validate, collect, dup, rows }) {
   const edit = () => { setBlock(""); setStage("form"); };
   const list = d ? rows(d) : [];
   const text = d ? ["THE NIGHTMARE ARENA 2.0 · " + title, ...(d.id ? ["ID: " + d.id] : []), ...list.map(([a, b]) => `${a}: ${b}`)].join("\n") : "";
-  return { stage, errs, dupMsg, block, d, list, text, title, submit, confirm, edit };
+  return { stage, errs, dupMsg, block, saving, d, list, text, title, submit, confirm, edit };
 }
 
 function Review({ flow }) {
@@ -1192,8 +1195,12 @@ function Review({ flow }) {
       <table><tbody>{flow.list.map(([a, b]) => <tr key={a}><th>{a}</th><td>{b}</td></tr>)}</tbody></table>
       {flow.block && <div className="err" style={{ fontSize: "1rem" }}>{flow.block}</div>}
       <div className="act">
-        <button className="btn alt" onClick={flow.edit}>← Edit</button>
-        {!flow.block && <button className="btn" onClick={flow.confirm}>Confirm registration ▶</button>}
+        <button className="btn alt" onClick={flow.edit} disabled={flow.saving}>← Edit</button>
+        {!flow.block && (
+          <button className="btn" onClick={flow.confirm} disabled={flow.saving}>
+            {flow.saving ? "Saving…" : "Confirm registration ▶"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1420,10 +1427,23 @@ function AdminPage({
   const [activeSection, setActiveSection] = useState("overview"); // "overview" | "bgmi" | "fc26"
   const [search, setSearch] = useState("");
   const [detail, setDetail] = useState(null);    // registration object to show
+  const [loadingRegs, setLoadingRegs] = useState(false);
+  const [fetchError, setFetchError] = useState("");
 
-  // load regs whenever authed changes
+  // load regs from Supabase whenever authed/demoMode changes
+  const loadFromSupabase = () => {
+    if (!authed || demoMode) return;
+    setLoadingRegs(true); setFetchError("");
+    fetchRegistrations()
+      .then((data) => { setRegs(data); })
+      .catch((e) => { setFetchError("Failed to load registrations: " + e.message); })
+      .finally(() => setLoadingRegs(false));
+  };
+
   useEffect(() => {
-    if (authed) setRegs(demoMode ? DEMO_REGISTRATIONS : loadRegs());
+    if (!authed) return;
+    if (demoMode) { setRegs(DEMO_REGISTRATIONS); return; }
+    loadFromSupabase();
   }, [authed, demoMode]);
 
   const login = (e) => {
@@ -1432,19 +1452,30 @@ function AdminPage({
     else { setErr("Wrong password. Try again."); setPw(""); }
   };
   const logout = () => { sessionStorage.removeItem("na2_admin"); setAuthed(false); setRegs([]); };
-  const deleteReg = (id) => {
+  const deleteReg = async (id) => {
     if (demoMode) return;
     if (!window.confirm("Delete registration " + id + "?")) return;
-    const next = regs.filter((r) => r.id !== id);
-    localStorage.setItem("na2_regs", JSON.stringify(next));
-    setRegs(next);
-    if (detail?.id === id) setDetail(null);
+    try {
+      await deleteRegistration(id);
+      const next = regs.filter((r) => r.id !== id);
+      // also remove from local cache
+      localStorage.setItem("na2_regs", JSON.stringify(next));
+      setRegs(next);
+      if (detail?.id === id) setDetail(null);
+    } catch (e) {
+      alert("Delete failed: " + e.message);
+    }
   };
-  const clearAll = () => {
+  const clearAll = async () => {
     if (demoMode) return;
     if (!window.confirm("DELETE ALL registrations? This cannot be undone.")) return;
-    localStorage.setItem("na2_regs", "[]");
-    setRegs([]); setDetail(null);
+    try {
+      await deleteAllRegistrations();
+      localStorage.setItem("na2_regs", "[]");
+      setRegs([]); setDetail(null);
+    } catch (e) {
+      alert("Clear failed: " + e.message);
+    }
   };
   const generateFc26Bracket = () => {
     const entrants = regs.filter((registration) => registration.g === "fc26");
@@ -1555,6 +1586,11 @@ function AdminPage({
             <button className={`btn ${demoMode ? "" : "alt"}`} onClick={() => setDemoMode(!demoMode)}>
               {demoMode ? "Exit demo data" : "Preview with demo data"}
             </button>
+            {!demoMode && (
+              <button className="btn alt" onClick={loadFromSupabase} disabled={loadingRegs}>
+                {loadingRegs ? "Loading…" : "↻ Refresh"}
+              </button>
+            )}
             <button className="btn alt" onClick={exportCSV}>Export CSV</button>
             {!demoMode && <button className="btn alt" style={{ borderColor: "var(--red)", color: "var(--red)" }} onClick={clearAll}>Clear All</button>}
             <button className="btn" onClick={logout}>Logout</button>
@@ -1568,6 +1604,8 @@ function AdminPage({
           </div>
         )}
         {demoModeError && <div className="adm-setting-error" role="alert">{demoModeError}</div>}
+        {fetchError && <div className="adm-setting-error" role="alert">{fetchError}</div>}
+        {loadingRegs && <div style={{ color: "var(--dim)", padding: "8px 0", fontSize: ".9rem" }}>Loading registrations from database…</div>}
 
         <nav className="adm-game-nav" aria-label="Admin sections">
           {[
