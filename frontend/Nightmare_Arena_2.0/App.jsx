@@ -1155,12 +1155,30 @@ function useFlow({ game, pre, title, validate, collect, dup, rows }) {
     if (m) { setDupMsg(m); return; }
     setD(x); setBlock(""); setStage("review");
   };
-  const confirm = () => {
-    const m = dup(d, loadRegs());
-    if (m) { setBlock(m); return; }
-    const x = { ...d, id: `${pre}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`, t: new Date().toISOString() };
-    saveReg(x); setD(x); setStage("done");
+  const confirm = async () => {
+  const m = dup(d, loadRegs());
+
+  if (m) {
+    setBlock(m);
+    return;
+  }
+
+  const x = {
+    ...d,
+    id: `${pre}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+    t: new Date().toISOString(),
   };
+
+  try {
+    await saveRegistration(x);
+    setD(x);
+    setStage("done");
+  } catch (error) {
+    setBlock(
+      error.message || "Registration failed. Please try again."
+    );
+  }
+};
   const edit = () => { setBlock(""); setStage("form"); };
   const list = d ? rows(d) : [];
   const text = d ? ["THE NIGHTMARE ARENA 2.0 · " + title, ...(d.id ? ["ID: " + d.id] : []), ...list.map(([a, b]) => `${a}: ${b}`)].join("\n") : "";

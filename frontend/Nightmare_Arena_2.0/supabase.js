@@ -1,46 +1,36 @@
 
-export async function saveRegistration(data) {
-  const isBgmi = data.g === "bgmi";
-  const isFc26 = data.g === "fc26";
+import { createClient } from "@supabase/supabase-js";
 
-  if (!isBgmi && !isFc26) {
-    throw new Error("Invalid game selected.");
-  }
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-  const registration = {
-    game: isBgmi ? "BGMI" : "FC 26",
-    team_name: isBgmi ? data.team : null,
-    captain_name: isBgmi ? data.cap : null,
-    player_name: isFc26 ? data.name : null,
-    email: data.mail,
-    phone: data.ph,
-    players: isBgmi
-      ? data.pl.map((p) => ({
-          name: p.n,
-          uid: p.u,
-        }))
-      : [
-          {
-            name: data.name,
-            ign: data.ign || "",
-          },
-          ...data.mates.map((m) => ({
-            name: m.n,
-            ign: m.i || "",
-          })),
-        ],
-  };
+console.log("Supabase URL loaded:", Boolean(supabaseUrl));
+console.log("Supabase key loaded:", Boolean(supabaseKey));
 
-  const { data: saved, error } = await supabase
-    .from("registrations")
-    .insert(registration)
-    .select("id")
-    .single();
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error("Supabase environment variables are missing.");
+}
+
+export const supabase = createClient(supabaseUrl, supabaseKey);
+
+export async function saveRegistration(registration) {
+  const { error } = await supabase.from("registrations").insert({
+    registration_id: registration.id,
+    game: registration.g,
+    email: registration.mail,
+    phone: registration.ph,
+    team_name: registration.g === "bgmi" ? registration.team : null,
+    data: registration,
+  });
 
   if (error) {
-    console.error("Registration error:", error.message);
-    throw new Error("Registration could not be saved. Please try again.");
+    if (error.code === "23505") {
+      throw new Error(
+        "This registration already exists. Check the email, phone, or team name."
+      );
+    }
+    throw new Error(error.message);
   }
 
-  return saved;
+  return registration;
 }
