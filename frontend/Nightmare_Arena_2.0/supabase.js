@@ -9,10 +9,26 @@ const supabase = createClient(
  * Save a registration to Supabase.
  * The `reg` object must already have `id` and `t` set.
  */
-export async function saveRegistration(reg) {
-  const { error } = await supabase.from("registrations").insert(reg);
-  if (error) throw new Error(error.message);
+
+export async function saveRegistration(registration) {
+  const { error } = await supabase.from("registrations").insert({
+    registration_id: registration.id,
+    game: registration.g,
+    email: registration.mail,
+    phone: registration.ph,
+    team_name:
+      registration.g === "bgmi" ? registration.team : null,
+    data: registration,
+  });
+
+  if (error) {
+    console.error("Supabase registration error:", error);
+    throw new Error(error.message);
+  }
+
+  return registration;
 }
+
 
 /**
  * Fetch all registrations from Supabase, newest first.
