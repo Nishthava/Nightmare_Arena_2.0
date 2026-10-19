@@ -1,7 +1,9 @@
+
 {
-  "buildCommand": "cd frontend/Nightmare_Arena_2.0 && npm install && npm run build",
-  "outputDirectory": "frontend/Nightmare_Arena_2.0/dist",
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }
