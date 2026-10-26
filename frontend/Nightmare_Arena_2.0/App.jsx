@@ -305,13 +305,14 @@ function useFc26Bracket(demoMode) {
   return { ...state, saveBracket, setPublished };
 }
 
-function advanceBracket(bracket, roundIndex, matchIndex, winnerId) {
+function setBracketWinner(bracket, roundIndex, matchIndex, winnerId) {
   const rounds = bracket.rounds.map((round) => ({
     ...round,
     matches: round.matches.map((match) => ({ ...match, players: [...match.players] })),
   }));
   const match = rounds[roundIndex]?.matches[matchIndex];
-  if (!match || !match.players.includes(winnerId) || !match.players[0] || !match.players[1]) return bracket;
+  if (!match || !match.players[0] || !match.players[1]
+    || (winnerId !== null && !match.players.includes(winnerId))) return bracket;
   match.winnerId = winnerId;
 
   for (let i = roundIndex + 1; i < rounds.length; i += 1) {
@@ -320,10 +321,13 @@ function advanceBracket(bracket, roundIndex, matchIndex, winnerId) {
         rounds[i - 1].matches[nextIndex * 2]?.winnerId ?? null,
         rounds[i - 1].matches[nextIndex * 2 + 1]?.winnerId ?? null,
       ];
+      const samePlayers = players[0] === nextMatch.players[0] && players[1] === nextMatch.players[1];
       return {
         ...nextMatch,
         players,
-        winnerId: nextMatch.winnerId && players.includes(nextMatch.winnerId) ? nextMatch.winnerId : null,
+        winnerId: samePlayers && players[0] && players[1] && players.includes(nextMatch.winnerId)
+          ? nextMatch.winnerId
+          : null,
       };
     });
   }
@@ -333,9 +337,9 @@ function advanceBracket(bracket, roundIndex, matchIndex, winnerId) {
 function createDemoBracket() {
   let bracket = createBracket(DEMO_REGISTRATIONS);
   ["DEMO-FC26-01", "DEMO-FC26-04", "DEMO-FC26-02", "DEMO-FC26-03"]
-    .forEach((winnerId, matchIndex) => { bracket = advanceBracket(bracket, 0, matchIndex, winnerId); });
-  bracket = advanceBracket(bracket, 1, 0, "DEMO-FC26-01");
-  bracket = advanceBracket(bracket, 1, 1, "DEMO-FC26-03");
+    .forEach((winnerId, matchIndex) => { bracket = setBracketWinner(bracket, 0, matchIndex, winnerId); });
+  bracket = setBracketWinner(bracket, 1, 0, "DEMO-FC26-01");
+  bracket = setBracketWinner(bracket, 1, 1, "DEMO-FC26-03");
   return bracket;
 }
 
@@ -757,7 +761,7 @@ function GameSelect() {
   );
 }
 
-function BracketBoard({ bracket, onWinner }) {
+function BracketBoard({ bracket, onWinner, onReset }) {
   const names = new Map(bracket.entrants.map((entrant) => [entrant.id, entrant.name]));
   return (
     <div className="fc-bracket">
@@ -786,10 +790,21 @@ function BracketBoard({ bracket, onWinner }) {
                   </button>
                 );
               })}
-              {match.winnerId && (
-                <span className="fc-match-advance">
-                  {round.name === "Final" ? "Tournament champion" : "Winner advances"}
-                </span>
+              {match.winnerId && match.players[0] && match.players[1] && (
+                <>
+                  <span className="fc-match-advance">
+                    {round.name === "Final" ? "Tournament champion" : "Winner advances"}
+                  </span>
+                  {onReset && (
+                    <button
+                      className="fc-match-reset"
+                      type="button"
+                      onClick={() => onReset(roundIndex, matchIndex)}
+                    >
+                      Reset match
+                    </button>
+                  )}
+                </>
               )}
             </div>
           ))}
@@ -1521,7 +1536,11 @@ function AdminPage({
   };
   const chooseFc26Winner = (roundIndex, matchIndex, winnerId) => {
     if (!bracket) return;
-    setBracket(advanceBracket(bracket, roundIndex, matchIndex, winnerId));
+    setBracket(setBracketWinner(bracket, roundIndex, matchIndex, winnerId));
+  };
+  const resetFc26Match = (roundIndex, matchIndex) => {
+    if (!bracket) return;
+    setBracket(setBracketWinner(bracket, roundIndex, matchIndex, null));
   };
   const exportCSV = () => {
     const rows = [["ID", "Game", "Name/Team", "Captain/IGN", "Email", "Phone", "Registered at"]];
@@ -1748,7 +1767,7 @@ function AdminPage({
                     {bracketPublished ? "Hide from frontend" : "Publish bracket"}
                   </button>
                 </div>
-                <BracketBoard bracket={bracket} onWinner={chooseFc26Winner} />
+                <BracketBoard bracket={bracket} onWinner={chooseFc26Winner} onReset={resetFc26Match} />
               </>
               : <p className="adm-bracket-entrants">No bracket yet. Generate one when you are ready.</p>}
         </section>}

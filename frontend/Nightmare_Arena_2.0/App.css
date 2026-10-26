@@ -196,6 +196,8 @@ button.fc-match-player:hover:not(:disabled){border-color:var(--amber)}
 .fc-match-player b{font-size:.62rem;letter-spacing:.1em}
 .fc-match-player+.fc-match-player{margin-top:4px}
 .fc-match-advance{display:block;color:#7dff7d;font-size:.68rem;letter-spacing:.08em;margin:7px 2px 0}
+.fc-match-reset{margin:7px 2px 0;padding:4px 8px;border:1px solid var(--line);background:transparent;color:var(--dim);font:inherit;font-size:.7rem;cursor:pointer}
+.fc-match-reset:hover{border-color:var(--red);color:var(--red)}
 @media(max-width:600px){.adm-fc-bracket-header,.adm-bracket-publish{align-items:flex-start;flex-direction:column}.adm-fc-bracket-header .btn,.adm-bracket-publish .btn{align-self:stretch}}
 
 .adm-bgmi-leaderboard{max-width:none;padding:20px;margin:0 0 32px;border:1px solid var(--line);background:rgba(8,12,22,.85)}
