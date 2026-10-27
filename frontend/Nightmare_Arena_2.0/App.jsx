@@ -6,6 +6,8 @@ import {
   deleteAllRegistrations,
   signInAdmin,
   signOutAdmin,
+  fetchBgmiLeaderboard,
+  saveBgmiLeaderboard as saveBgmiLeaderboardRemote,
 } from "./supabase";
 import "./App.css";
 
@@ -16,6 +18,7 @@ const EVENT_START = new Date("2026-10-30T09:00:00+05:30").getTime();
 const ORG = { wa: "91XXXXXXXXXX", mail: "your-email@college.edu" }; // WhatsApp: country code + number, no "+"
 // FC 26 format: "solo" (teamSize 1), "duo" (teamSize 2), "squad" (teamSize 3+)
 const FC26 = { format: "solo", teamSize: 1, labels: { solo: "SOLO 1v1", duo: "DUO", squad: "SQUAD" } };
+const FC26_REGISTRATION_OPEN = false;
 
 const RULES = {
   bgmi: [
@@ -355,6 +358,10 @@ function isValidBgmiLeaderboard(value) {
   return value
     && Number.isInteger(value.pointsPerKill)
     && value.pointsPerKill >= 0
+    && (value.publicTeams === undefined || (Array.isArray(value.publicTeams)
+      && value.publicTeams.every((team) => team
+        && typeof team.id === "string"
+        && typeof team.team === "string")))
     && Array.isArray(value.placementPoints)
     && value.placementPoints.every((points) => Number.isInteger(points) && points >= 0)
     && Array.isArray(value.matches)
@@ -385,25 +392,99 @@ function readBgmiLeaderboard(demoMode = false) {
 
 function useBgmiLeaderboard(demoMode) {
   const [state, setState] = useState(() => readBgmiLeaderboard(demoMode));
+  const saveRevision = useRef(0);
+  const saveQueue = useRef(Promise.resolve());
+  const pendingSaves = useRef(0);
 
   useEffect(() => {
     setState(readBgmiLeaderboard(demoMode));
+    if (demoMode) {
+      const syncDemo = (event) => {
+        if (event.key === DEMO_BGMI_LEADERBOARD_KEY || event.key === null) {
+          setState(readBgmiLeaderboard(true));
+        }
+      };
+      window.addEventListener("storage", syncDemo);
+      return () => window.removeEventListener("storage", syncDemo);
+    }
+
+    let active = true;
+    const syncRemote = async () => {
+      if (pendingSaves.current > 0) return;
+      const revision = saveRevision.current;
+      try {
+        const remote = await fetchBgmiLeaderboard();
+        if (!active || pendingSaves.current > 0 || revision !== saveRevision.current || remote === null) return;
+        if (!isValidBgmiLeaderboard(remote)) {
+          setState((current) => ({
+            ...current,
+            error: "The shared BGMI leaderboard is invalid. Update it from the admin panel.",
+          }));
+          return;
+        }
+        setState({ leaderboard: remote, error: "" });
+      } catch (error) {
+        if (active && revision === saveRevision.current) {
+          setState((current) => ({
+            ...current,
+            error: `Could not load the shared BGMI leaderboard: ${error.message}`,
+          }));
+        }
+      }
+    };
+    syncRemote();
+    const interval = window.setInterval(syncRemote, 30000);
     const sync = (event) => {
-      const key = demoMode ? DEMO_BGMI_LEADERBOARD_KEY : BGMI_LEADERBOARD_KEY;
-      if (event.key === key || event.key === null) setState(readBgmiLeaderboard(demoMode));
+      if (event.key === BGMI_LEADERBOARD_KEY || event.key === null) {
+        setState(readBgmiLeaderboard(false));
+      }
     };
     window.addEventListener("storage", sync);
-    return () => window.removeEventListener("storage", sync);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("storage", sync);
+    };
   }, [demoMode]);
 
   const saveLeaderboard = (leaderboard) => {
-    try {
-      const key = demoMode ? DEMO_BGMI_LEADERBOARD_KEY : BGMI_LEADERBOARD_KEY;
-      localStorage.setItem(key, JSON.stringify(leaderboard));
-      setState({ leaderboard, error: "" });
-    } catch {
-      setState((current) => ({ ...current, error: "Could not save the BGMI leaderboard. Check this browser's storage settings." }));
+    const revision = ++saveRevision.current;
+    setState({ leaderboard, error: "" });
+    if (demoMode) {
+      try {
+        localStorage.setItem(DEMO_BGMI_LEADERBOARD_KEY, JSON.stringify(leaderboard));
+      } catch {
+        setState((current) => ({
+          ...current,
+          error: "Could not save the demo BGMI leaderboard. Check this browser's storage settings.",
+        }));
+      }
+      return;
     }
+
+    let cacheError = "";
+    try {
+      localStorage.setItem(BGMI_LEADERBOARD_KEY, JSON.stringify(leaderboard));
+    } catch {
+      cacheError = " Could not save the local cache; shared leaderboard is still being updated.";
+    }
+    pendingSaves.current += 1;
+    saveQueue.current = saveQueue.current
+      .then(() => saveBgmiLeaderboardRemote(leaderboard))
+      .then(() => {
+        if (revision === saveRevision.current) {
+          setState((current) => ({ ...current, error: cacheError }));
+        }
+      })
+      .catch((error) => {
+        if (revision === saveRevision.current) {
+          setState((current) => ({
+            ...current,
+            error: `Could not publish the BGMI leaderboard: ${error.message}.${cacheError}`,
+          }));
+        }
+      })
+      .finally(() => { pendingSaves.current -= 1; });
   };
 
   return { ...state, saveLeaderboard };
@@ -414,6 +495,7 @@ function getBgmiStandings(teams, leaderboard) {
     let kills = 0;
     let placementPoints = 0;
     let matchesPlayed = 0;
+    let chickenDinners = 0;
     let bestPlacement = Infinity;
 
     leaderboard.matches.forEach((match) => {
@@ -423,6 +505,7 @@ function getBgmiStandings(teams, leaderboard) {
       kills += score.kills;
       placementPoints += leaderboard.placementPoints[score.placement - 1] ?? 0;
       bestPlacement = Math.min(bestPlacement, score.placement);
+      if (score.placement === 1) chickenDinners += 1;
     });
 
     return {
@@ -430,6 +513,7 @@ function getBgmiStandings(teams, leaderboard) {
       kills,
       placementPoints,
       matchesPlayed,
+      chickenDinners,
       bestPlacement,
       points: placementPoints + kills * leaderboard.pointsPerKill,
     };
@@ -830,6 +914,12 @@ function PublicBracket({ bracket, published, error }) {
 function PublicBgmiLeaderboard({ teams, leaderboard, error }) {
   if (leaderboard.matches.length === 0 && !error) return null;
   const standings = getBgmiStandings(teams, leaderboard);
+  const matchesPlayed = leaderboard.matches.filter((match) =>
+    Object.values(match.scores).some((score) => score
+      && score.placement !== null
+      && score.kills !== null)
+  ).length;
+  const chickenDinners = standings.reduce((total, team) => total + team.chickenDinners, 0);
   return (
     <div className="public-tournament-panel" id="bgmi-leaderboard">
       <Rv className="k2">// BGMI · LIVE STANDINGS</Rv>
@@ -837,14 +927,17 @@ function PublicBgmiLeaderboard({ teams, leaderboard, error }) {
       {error ? <div className="reg-closed" role="alert">{error}</div> : (
         <Rv className="bgmi-leaderboard-wrap">
           <p className="bgmi-scoring-note">
-            {leaderboard.matches.length} {leaderboard.matches.length === 1 ? "match" : "matches"} recorded
-            {" · "}{leaderboard.pointsPerKill} {leaderboard.pointsPerKill === 1 ? "point" : "points"} per kill
+            {leaderboard.pointsPerKill} {leaderboard.pointsPerKill === 1 ? "point" : "points"} per kill
           </p>
+          <div className="bgmi-leaderboard-stats">
+            <div><b>{matchesPlayed}</b><span>Total matches played</span></div>
+            <div><b>{chickenDinners}</b><span>Chicken dinners</span></div>
+          </div>
           {standings.length === 0 ? <p>No registered BGMI teams are available.</p> : (
             <div className="bgmi-table-scroll">
               <table className="bgmi-table">
                 <thead>
-                  <tr><th>Rank</th><th>Team</th><th>Matches</th><th>Kills</th><th>Placement pts</th><th>Total pts</th></tr>
+                  <tr><th>Rank</th><th>Team</th><th>Matches played</th><th>Chicken dinners</th><th>Kills</th><th>Placement pts</th><th>Total pts</th></tr>
                 </thead>
                 <tbody>
                   {standings.map((team, index) => (
@@ -852,6 +945,7 @@ function PublicBgmiLeaderboard({ teams, leaderboard, error }) {
                       <td>{index + 1}</td>
                       <td><b>{team.team}</b></td>
                       <td>{team.matchesPlayed}</td>
+                      <td>{team.chickenDinners}</td>
                       <td>{team.kills}</td>
                       <td>{team.placementPoints}</td>
                       <td><b className="bgmi-total-points">{team.points}</b></td>
@@ -878,6 +972,10 @@ function BgmiLeaderboardAdmin({ teams, leaderboard, saveLeaderboard, error }) {
   }, [leaderboard.pointsPerKill, leaderboard.placementPoints]);
 
   const visiblePlacements = Math.max(1, teams.length);
+  const saveWithTeamNames = (nextLeaderboard) => saveLeaderboard({
+    ...nextLeaderboard,
+    publicTeams: teams.map(({ id, team }) => ({ id, team })),
+  });
   const saveScoringRules = () => {
     const killPoints = Number(pointsPerKill);
     const placements = Array.from({ length: Math.max(25, teams.length) }, (_, index) => Number(placementPoints[index] ?? 0));
@@ -887,7 +985,7 @@ function BgmiLeaderboardAdmin({ teams, leaderboard, saveLeaderboard, error }) {
       return;
     }
     setScoringError("");
-    saveLeaderboard({ ...leaderboard, pointsPerKill: killPoints, placementPoints: placements });
+    saveWithTeamNames({ ...leaderboard, pointsPerKill: killPoints, placementPoints: placements });
   };
 
   const addMatch = () => {
@@ -897,7 +995,7 @@ function BgmiLeaderboardAdmin({ teams, leaderboard, saveLeaderboard, error }) {
       name: `Match ${leaderboard.matches.length + 1}`,
       scores: Object.fromEntries(teams.map((team) => [team.id, { placement: null, kills: null }])),
     };
-    saveLeaderboard({ ...leaderboard, matches: [...leaderboard.matches, match] });
+    saveWithTeamNames({ ...leaderboard, matches: [...leaderboard.matches, match] });
   };
 
   const updateScore = (matchId, teamId, field, rawValue) => {
@@ -909,12 +1007,12 @@ function BgmiLeaderboardAdmin({ teams, leaderboard, saveLeaderboard, error }) {
       const previous = match.scores[teamId] || { placement: null, kills: null };
       return { ...match, scores: { ...match.scores, [teamId]: { ...previous, [field]: value } } };
     });
-    saveLeaderboard({ ...leaderboard, matches });
+    saveWithTeamNames({ ...leaderboard, matches });
   };
 
   const removeMatch = (matchId) => {
     if (!window.confirm("Delete this match and its scores?")) return;
-    saveLeaderboard({ ...leaderboard, matches: leaderboard.matches.filter((match) => match.id !== matchId) });
+    saveWithTeamNames({ ...leaderboard, matches: leaderboard.matches.filter((match) => match.id !== matchId) });
   };
 
   return (
@@ -925,7 +1023,16 @@ function BgmiLeaderboardAdmin({ teams, leaderboard, saveLeaderboard, error }) {
           <h3>BGMI leaderboard</h3>
           <p>Enter each squad's placement and kills for every match. The standings update automatically.</p>
         </div>
-        <button className="btn" onClick={addMatch} disabled={teams.length === 0}>Add match</button>
+        <div className="adm-bgmi-actions">
+          <button
+            className="btn alt"
+            onClick={() => saveWithTeamNames(leaderboard)}
+            disabled={teams.length === 0}
+          >
+            Publish to frontend
+          </button>
+          <button className="btn" onClick={addMatch} disabled={teams.length === 0}>Add match</button>
+        </div>
       </div>
       {error && <div className="adm-setting-error" role="alert">{error}</div>}
 
@@ -998,7 +1105,7 @@ function BgmiLeaderboardAdmin({ teams, leaderboard, saveLeaderboard, error }) {
   );
 }
 
-function Home({ registrationOpen, bracket, bracketPublished, bracketError, bgmiTeams, bgmiLeaderboard, bgmiLeaderboardError, demoMode }) {
+function Home({ registrationOpen, fc26RegistrationOpen, bracket, bracketPublished, bracketError, bgmiTeams, bgmiLeaderboard, bgmiLeaderboardError, demoMode }) {
   const [openResult, setOpenResult] = useState("");
   return (
     <main>
@@ -1081,7 +1188,9 @@ function Home({ registrationOpen, bracket, bracketPublished, bracketError, bgmiT
             <Rv as="h2">Choose your game. <span>Register.</span></Rv>
             <Rv className="reg2">
               <a className="rc" href="#/bgmi" style={{ "--c": "#ff2433" }}><b>BGMI</b><span>Squad of 4 + 1 optional substitute</span><em>Register your squad ▶</em></a>
-              <a className="rc" href="#/fc26" style={{ "--c": "#4db3ff" }}><b>FC 26</b><span>FIFA · individual tournament</span><em>Register as a player ▶</em></a>
+              {fc26RegistrationOpen
+                ? <a className="rc" href="#/fc26" style={{ "--c": "#4db3ff" }}><b>FC 26</b><span>FIFA · individual tournament</span><em>Register as a player ▶</em></a>
+                : <div className="rc rc-closed" aria-disabled="true" style={{ "--c": "#4db3ff" }}><b>FC 26</b><span>FIFA · individual tournament</span><em>Registration closed</em></div>}
             </Rv>
           </>
         ) : (
@@ -1879,15 +1988,18 @@ export default function App() {
       {route === "bgmi"
         ? demoMode.enabled ? <RegistrationClosedPage demoMode /> : registrationStatus.open ? <BgmiPage /> : <RegistrationClosedPage />
         : route === "fc26"
-          ? demoMode.enabled ? <RegistrationClosedPage demoMode /> : registrationStatus.open ? <Fc26Page /> : <RegistrationClosedPage />
+          ? demoMode.enabled ? <RegistrationClosedPage demoMode /> : registrationStatus.open && FC26_REGISTRATION_OPEN ? <Fc26Page /> : <RegistrationClosedPage />
           : <><Home
             registrationOpen={registrationStatus.open}
+            fc26RegistrationOpen={FC26_REGISTRATION_OPEN}
             bracket={fc26Bracket.bracket}
             bracketPublished={fc26Bracket.published}
             bracketError={fc26Bracket.error}
             bgmiTeams={demoMode.enabled
               ? DEMO_REGISTRATIONS.filter((registration) => registration.g === "bgmi")
-              : loadRegs().filter((registration) => registration.g === "bgmi")}
+              : bgmiLeaderboard.leaderboard.publicTeams?.length
+                ? bgmiLeaderboard.leaderboard.publicTeams
+                : loadRegs().filter((registration) => registration.g === "bgmi")}
             bgmiLeaderboard={bgmiLeaderboard.leaderboard}
             bgmiLeaderboardError={bgmiLeaderboard.error}
             demoMode={demoMode.enabled}

@@ -60,6 +60,25 @@ export async function deleteAllRegistrations() {
   if (error) throw error;
 }
 
+export async function fetchBgmiLeaderboard() {
+  const { data, error } = await supabase
+    .from("bgmi_leaderboard")
+    .select("data")
+    .eq("id", 1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.data ?? null;
+}
+
+export async function saveBgmiLeaderboard(leaderboard) {
+  const { error } = await supabase
+    .from("bgmi_leaderboard")
+    .upsert({ id: 1, data: leaderboard, updated_at: new Date().toISOString() });
+
+  if (error) throw error;
+}
+
 export async function signInAdmin(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
